@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+*.zip
+.env
+.DS_Store
+.github
+dashboard
+log
+CLAUDE.md
