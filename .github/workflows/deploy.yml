@@ -1,0 +1,68 @@
+name: Deploy Lambda Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'rambdaA/**'
+      - 'rambdaB/**'
+      - '.github/workflows/deploy.yml'
+
+permissions:
+  id-token: write   # OIDC 토큰 발급 필수
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rambdaA: ${{ steps.filter.outputs.rambdaA }}
+      rambdaB: ${{ steps.filter.outputs.rambdaB }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rambdaA:
+              - 'rambdaA/**'
+            rambdaB:
+              - 'rambdaB/**'
+
+  deploy-rambda-a:
+    needs: changes
+    if: needs.changes.outputs.rambdaA == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Zip rambdaA
+        run: cd rambdaA && zip -r ../rambdaA.zip . -x '*.venv*'
+      - name: Deploy to Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name ${{ vars.LAMBDA_FUNCTION_NAME_A }} \
+            --zip-file fileb://rambdaA.zip
+
+  deploy-rambda-b:
+    needs: changes
+    if: needs.changes.outputs.rambdaB == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Zip rambdaB
+        run: cd rambdaB && zip -r ../rambdaB.zip . -x '*.venv*'
+      - name: Deploy to Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name ${{ vars.LAMBDA_FUNCTION_NAME_B }} \
+            --zip-file fileb://rambdaB.zip
