@@ -1,3 +1,5 @@
+# fdr.py — 네이버 API 기반 KRX ETF 목록 수집 커스텀 모듈
+# 버전: v1.0.20260705.1
 import urllib.request
 import json
 import pandas as pd

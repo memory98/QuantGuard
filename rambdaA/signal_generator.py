@@ -1,6 +1,7 @@
 """
 signal_generator.py — Lambda A: 시그널 생성기
 ========================================================
+버전: v1.0.20260705.1
 실행: 매주 월요일 15:05 KST
 EventBridge: 타임존 Asia/Seoul / Cron: 5 15 ? * MON *
 Lambda 설정: Timeout 12분 / Memory 512MB

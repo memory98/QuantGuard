@@ -1,4 +1,5 @@
 # lambda_function.py — Lambda B: 메인 제어 타워
+# 버전: v1.0.20260705.1
 # [변경 이력]
 #   기능 1  : 주문 집행 완료 후 텔레그램 영수증 발송
 #   기능 2  : 핵심 로직 전체 try-except + traceback 텔레그램 에러 자백

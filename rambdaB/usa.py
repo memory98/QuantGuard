@@ -1,4 +1,5 @@
 # usa.py — Lambda B: 국외 ETF 매매 로직 (확장 뼈대)
+# 버전: v1.0.20260705.1
 from config import BUDGET_RATIO
 
 
