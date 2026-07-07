@@ -1,5 +1,5 @@
 # lambda_function.py — Lambda B: 메인 제어 타워
-# 버전: v1.0.20260705.1
+# 버전: v1.0.20260707.1
 # [변경 이력]
 #   기능 1  : 주문 집행 완료 후 텔레그램 영수증 발송
 #   기능 2  : 핵심 로직 전체 try-except + traceback 텔레그램 에러 자백
@@ -74,11 +74,20 @@ def build_execution_report(
     market_status: str,
     korea_result: dict,
     usa_result: dict,
+    weekly_return_pct: float = None,
+    prev_date: str = None,
 ) -> str:
     """매매 집행 완료 후 영수증 형태의 텔레그램 메시지를 생성합니다."""
 
     mode_tag    = "🧪 테스트 모드" if FORCE_TEST_MODE else "🚀 실전 모드"
     status_icon = "🚨 BEAR" if market_status == "BEAR" else "🟢 BULL"
+
+    # [fix15] 종목명(코드) 병기
+    name_map = korea_result.get("name_map") or {}
+
+    def fmt(code) -> str:
+        name = name_map.get(code)
+        return f"{name}({code})" if name else str(code)
 
     lines = [
         f"🧾 <b>[QuantGuard] 자동매매 주문 집행 완료 보고서</b>  {mode_tag}",
@@ -89,14 +98,23 @@ def build_execution_report(
         f"   총 자산          : {total_asset:>15,} 원",
         f"   현금 예치금 차감  : {cash_reserve:>15,} 원",
         f"   실제 운용 자산    : {investable_asset:>15,} 원",
-        "─" * 32,
     ]
 
+    # [fix15] 주간 수익률 (직전 실행 대비, 입출금 미반영)
+    if weekly_return_pct is not None:
+        lines.append(f"   전회({prev_date or '?'}) 대비: {weekly_return_pct:+.2f}% (입출금 미반영)")
+
+    lines.append("─" * 32)
     lines.append("🇰🇷 <b>국내 ETF 매매 내역</b>")
     korea_res_code = korea_result.get("result", "")
 
     if korea_res_code == "BEAR_SHELTER_EXECUTED":
         lines.append("  ⛔ BEAR 대피: 전 종목 지정가(-1%) 매도 집행")
+        failed_sells = korea_result.get("failed_sells", [])
+        if failed_sells:
+            lines.append(f"  🚨 <b>매도 실패 {len(failed_sells)}건 — 수동 확인 필요!</b>")
+            for code, qty in failed_sells:
+                lines.append(f"     - {fmt(code)}: {qty}주 미처분")
     elif korea_res_code in ("BEAR_SHELTER_ALREADY_CLEAN", "BEAR_SHELTER_CLEAN"):
         lines.append("  ✅ BEAR 대피: 이미 현금 상태 (매도 불필요)")
     elif korea_res_code in ("ZERO_ASSET_COMPLETED", "CASH_RESERVE_EXCEEDED"):
@@ -110,21 +128,54 @@ def build_execution_report(
             for item in sell_orders:
                 code = item[0] if isinstance(item, (list, tuple)) else item.get("code", "?")
                 qty  = item[1] if isinstance(item, (list, tuple)) else item.get("qty", 0)
-                lines.append(f"     - {code}: {qty}주")
+                lines.append(f"     - {fmt(code)}: {qty}주")
+            if not korea_result.get("sell_settled", True):
+                lines.append("  ⚠️ 일부 매도가 제한시간 내 체결 확인되지 않음")
         else:
             lines.append("  📤 매도 없음")
 
-        if buy_orders:
+        if korea_result.get("buys_skipped_unsettled"):
+            lines.append("  🚨 <b>매수 전체 스킵</b> — 매도 대금 미반영(예수금 0원). 수동 확인 필요")
+        elif buy_orders:
             lines.append(f"  📥 <b>매수</b> ({len(buy_orders)}건)")
             for item in buy_orders:
                 code  = item[0] if isinstance(item, (list, tuple)) else item.get("code", "?")
                 qty   = item[1] if isinstance(item, (list, tuple)) else item.get("qty", 0)
                 price = item[2] if isinstance(item, (list, tuple)) and len(item) > 2 else item.get("price", 0)
-                lines.append(f"     - {code}: {qty}주 @ {int(price):,}원")
+                lines.append(f"     - {fmt(code)}: {qty}주 @ {int(price):,}원")
         else:
             lines.append("  📥 매수 없음")
+
+        # [fix15] 재투입 / 노트레이드 밴드 요약
+        reinvest = korea_result.get("reinvest_orders", [])
+        if reinvest:
+            total_reinvest = sum(o["qty"] * o["limit_price"] for o in reinvest if o.get("ok"))
+            lines.append(f"  ♻️ 잔여현금 재투입 {len(reinvest)}건 (≈{total_reinvest:,}원)")
+        band = korea_result.get("skipped_band", [])
+        if band:
+            lines.append(f"  🙅 노트레이드 밴드 스킵 {len(band)}건 (비중 미세조정 생략)")
+
+        # [fix15] 주문 실패 요약 (rt_cd 기반)
+        failed = [o for o in korea_result.get("executed_orders", []) if not o.get("ok")]
+        if failed:
+            lines.append(f"  🚨 <b>주문 거부/실패 {len(failed)}건</b>")
+            for o in failed:
+                side = "매수" if o.get("side") == "BUY" else "매도"
+                lines.append(f"     - [{side}] {fmt(o.get('code'))}: {o.get('qty')}주")
     else:
         lines.append(f"  ℹ️ 상태: {korea_res_code}")
+
+    # [fix15] 시그널 검증 정보 (모멘텀 base 대조용)
+    targets = korea_result.get("targets") or []
+    if targets:
+        lines.append("─" * 32)
+        lines.append("🔎 <b>시그널 검증</b> (모멘텀 base → 현재)")
+        for s in targets:
+            base_d = s.get("base_date", "?")
+            base_p = s.get("base_price")
+            base_str = f"{base_d} {base_p:,.0f}원" if base_p else base_d
+            lines.append(f"   {s.get('name', s.get('code'))}: "
+                         f"{s.get('momentum', 0)*100:+.1f}% ({base_str})")
 
     lines.append("─" * 32)
     lines.append("🇺🇸 <b>미국 ETF 매매 내역</b>")
@@ -291,6 +342,23 @@ def lambda_handler(event, context):
 
     s3 = boto3.client("s3")
 
+    # [fix15] 같은 날 중복 실행 가드
+    # 2026-06-30 사고: 장중 수동 TEST 호출로 실전 주문 로직이 그대로 발사됨.
+    # 오늘자 아카이브가 이미 있으면(=오늘 이미 실행됨) 재실행을 차단한다.
+    # 의도적 재실행은 테스트 이벤트에 {"force_run": true}를 넣어 우회.
+    if not (isinstance(event, dict) and event.get("force_run")):
+        today_archive_key = f"latest_signal/{korea_time.strftime('%Y-%m-%d')}.json"
+        try:
+            s3.head_object(Bucket=S3_BUCKET_NAME, Key=today_archive_key)
+            msg = (f"⛔ 오늘({korea_time.strftime('%Y-%m-%d')}) 이미 실행된 기록"
+                   f"({today_archive_key})이 있어 중복 실행을 차단합니다. "
+                   "의도적 재실행은 이벤트에 {\"force_run\": true}를 지정하세요.")
+            print(msg)
+            send_telegram("⛔ <b>[QuantGuard] 중복 실행 차단</b>\n" + msg)
+            return {"statusCode": 200, "body": "DUPLICATE_RUN_BLOCKED"}
+        except Exception:
+            pass  # 오늘자 아카이브 없음(404 등) = 오늘 첫 실행 → 정상 진행
+
     try:
         token = get_access_token()
 
@@ -327,6 +395,21 @@ def lambda_handler(event, context):
 
         print(f"💡 실제 운용 가용액: {investable_asset:,}원")
 
+        # [fix15] 주간 수익률: 직전 실행 시점의 총자산과 단순 비교 (입출금 미반영)
+        prev_equity, prev_date = None, None
+        try:
+            _prev_obj  = s3.get_object(Bucket=S3_BUCKET_NAME, Key=SIGNAL_FILE_KEY)
+            _prev_data = json.loads(_prev_obj["Body"].read().decode("utf-8"))
+            prev_equity = _prev_data.get("total_equity_checked")
+            prev_date   = str(_prev_data.get("updated_at", ""))[:10]
+        except Exception:
+            pass
+        weekly_return_pct = None
+        if prev_equity and prev_equity > 0:
+            weekly_return_pct = round((real_total_equity / prev_equity - 1) * 100, 2)
+            print(f"📈 전회 실행({prev_date}, {prev_equity:,}원) 대비 수익률: "
+                  f"{weekly_return_pct:+.2f}%")
+
         # [fix14] 선행 조회한 총자산을 대체값으로 전달 — 내부 잔고 재조회가
         # 0원을 반환하는 이상 상황에서도 매매가 통째로 스킵되지 않도록 함
         korea_result = run_korea_rebalancing(
@@ -334,13 +417,27 @@ def lambda_handler(event, context):
             fallback_total_equity = real_total_equity,
         )
 
+        # [fix15] VIX 판별 불가 → 안전 스킵 (조용히 끝내지 않고 텔레그램 경고)
+        if korea_result.get("result") == "VIX_UNKNOWN_SKIP":
+            send_telegram(
+                "⚠️ <b>[QuantGuard] VIX 판별 불가 — 리밸런싱 안전 스킵</b>\n"
+                "Lambda A가 VIX 수집과 직전값 carry-over에 모두 실패했습니다.\n"
+                "이번 주 매매를 건너뛰고 기존 포지션을 유지합니다.\n"
+                "야후 파이낸스 상태와 CloudWatch 로그를 확인하세요."
+            )
+            return {"statusCode": 200,
+                    "body": json.dumps(korea_result, ensure_ascii=False)}
+
         if korea_result.get("result") in (
             "S3_SIGNAL_ERROR", "NO_TARGETS", "STALE_SIGNAL_ABORT", "MARKET_CLOSED"
         ):
             return {"statusCode": 200,
                     "body": json.dumps(korea_result, ensure_ascii=False)}
 
-        if korea_result.get("result") in ("BEAR_SHELTER_EXECUTED", "BEAR_SHELTER_CLEAN"):
+        # [fix15] "BEAR_SHELTER_ALREADY_CLEAN"이 목록에 없어 BULL 경로로 새던 버그 수정
+        if korea_result.get("result") in (
+            "BEAR_SHELTER_EXECUTED", "BEAR_SHELTER_CLEAN", "BEAR_SHELTER_ALREADY_CLEAN"
+        ):
             print("🚨 BEAR 대피 완료 → 미국 ETF 스킵")
             output_signal = {
                 "updated_at":           now_str,
@@ -349,6 +446,9 @@ def lambda_handler(event, context):
                 "total_equity_checked": real_total_equity,
                 "cash_reserve":         CASH_RESERVE,
                 "investable_asset":     investable_asset,
+                "prev_equity":          prev_equity,
+                "prev_date":            prev_date,
+                "weekly_return_pct":    weekly_return_pct,
                 "korea":                korea_result,
                 "usa":                  {"result": "SKIPPED_BEAR"},
             }
@@ -361,7 +461,8 @@ def lambda_handler(event, context):
             print(f"✅ S3 아카이브 완료: {archive_key}")
             report = build_execution_report(
                 now_str, real_total_equity, investable_asset, CASH_RESERVE,
-                "BEAR", korea_result, {"result": "SKIPPED_BEAR"}
+                "BEAR", korea_result, {"result": "SKIPPED_BEAR"},
+                weekly_return_pct=weekly_return_pct, prev_date=prev_date,
             )
             send_telegram(report)
             return {"statusCode": 200,
@@ -381,10 +482,18 @@ def lambda_handler(event, context):
             "total_equity_checked": real_total_equity,
             "cash_reserve":         CASH_RESERVE,
             "investable_asset":     investable_asset,
+            # [fix15] 주간 성과 추적 필드
+            "prev_equity":          prev_equity,
+            "prev_date":            prev_date,
+            "weekly_return_pct":    weekly_return_pct,
             "korea": {
-                "sell_orders":     korea_result.get("sell_orders", []),
-                "buy_orders":      korea_result.get("buy_orders", []),
-                "executed_orders": korea_result.get("executed_orders", []),
+                "sell_orders":            korea_result.get("sell_orders", []),
+                "buy_orders":             korea_result.get("buy_orders", []),
+                "executed_orders":        korea_result.get("executed_orders", []),
+                "reinvest_orders":        korea_result.get("reinvest_orders", []),
+                "skipped_band":           korea_result.get("skipped_band", []),
+                "buys_skipped_unsettled": korea_result.get("buys_skipped_unsettled", False),
+                "sell_settled":           korea_result.get("sell_settled", True),
             },
             "usa": usa_result,
         }
@@ -406,6 +515,8 @@ def lambda_handler(event, context):
             korea_result.get("market_status", "BULL"),
             korea_result,
             usa_result,
+            weekly_return_pct=weekly_return_pct,
+            prev_date=prev_date,
         )
         print("\n📱 텔레그램 영수증 발송 중...")
         send_telegram(report)

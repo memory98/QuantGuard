@@ -1,7 +1,7 @@
 """
 signal_generator.py — Lambda A: 시그널 생성기
 ========================================================
-버전: v1.0.20260705.1
+버전: v1.0.20260707.1
 실행: 매주 월요일 15:05 KST
 EventBridge: 타임존 Asia/Seoul / Cron: 5 15 ? * MON *
 Lambda 설정: Timeout 12분 / Memory 512MB
@@ -27,6 +27,7 @@ Lambda 설정: Timeout 12분 / Memory 512MB
 """
 import json
 import os
+import re
 import boto3
 import time as _time
 import pandas as pd
@@ -80,7 +81,12 @@ SECTOR_KEYWORDS = [
     ("중공업_방산",     ["중공업", "방산", "조선", "기계"]),
     ("통신_미디어",     ["통신", "미디어", "방송", "엔터"]),
     ("원자재_금",       ["골드", "원자재", "농산물"]),               # fix7: "금" 제거 → "중공업" "금융" 등에서 오매칭 방지
-    ("국내_대형지수",   ["KOSPI200", "코스피200"]),                  # fix7: "200" 단독 키워드 제거 → 오매칭 방지
+    # [fix15] 커버리지 확장 — 코스피/TOP류 광범위 지수 ETF가 기타로 새던 버그 수정
+    #   ESG/사회책임 ETF도 사실상 코스피 대형주 바스켓이라 이 버킷으로 통합
+    #   "200" 단독 키워드는 fix7대로 재도입하지 않고 classify_sector의 경계 매칭으로 처리
+    ("국내_대형지수",   ["KOSPI200", "코스피200", "코스피", "KOSPI",
+                         "코리아TOP", "TOP10", "Top10", "TOP5", "Top5",
+                         "ESG", "사회책임"]),
     ("국내_중소형",     ["코스닥150", "중소형", "스몰캡"]),
     ("국내_가치",       ["밸류업", "가치", "배당"]),
     # ── 해외/글로벌 섹터 제거 (국내 ETF 전용 운용) ──────────
@@ -162,7 +168,13 @@ def get_filtered_etf_list() -> pd.DataFrame:
     etf_list.columns = [c.strip() for c in etf_list.columns]
     name_col   = next((c for c in etf_list.columns if '이름' in c or 'Name' in c), None)
     code_col   = next((c for c in etf_list.columns if '코드' in c or 'Code' in c or 'Symbol' in c), None)
-    volume_col = next((c for c in etf_list.columns if '거래' in c or 'Volume' in c), None)
+    # [fix15] 네이버 API 실제 컬럼명 대응 — 기존 탐지('거래'/'Volume')는 항상 실패해서
+    # "거래대금 상위 100"이 실제로는 API 기본 정렬 앞 100개로 동작하고 있었음
+    # amonut(거래대금, 네이버 API 오타 그대로) 우선, quant(거래량) 차선
+    volume_col = ('amonut' if 'amonut' in etf_list.columns
+                  else 'quant' if 'quant' in etf_list.columns
+                  else next((c for c in etf_list.columns
+                             if '거래' in c or 'Volume' in c), None))
 
     if not all([name_col, code_col]):
         raise Exception(f"컬럼 파싱 실패. 컬럼 목록: {list(etf_list.columns)}")
@@ -196,13 +208,28 @@ def get_filtered_etf_list() -> pd.DataFrame:
 # 3. 섹터 분류
 # ============================================================
 
+# [fix15] 단독 "200" 지수명 경계 매칭 (TIGER 200, RISE 200, KODEX 200TR 등)
+# 숫자에 붙은 200(1200, 2000 등)은 매칭하지 않음. 코스닥150 등은 무관.
+_INDEX_200_RE = re.compile(r"(^|[^0-9])200([^0-9]|$)")
+
+
 def classify_sector(name: str) -> str:
     for sector, keywords in SECTOR_KEYWORDS:
         if sector == "기타":
             continue
         if any(kw in name for kw in keywords):
             return sector
-    return f"기타_{name}"
+
+    # [fix15] 키워드 순회에서 안 걸린 "○○ 200"류 광범위 지수 ETF 구제
+    # (구체 섹터 키워드가 먼저 순회되므로 "TIGER 200 IT"는 여기 오기 전에 IT로 분류됨)
+    if _INDEX_200_RE.search(name):
+        return "국내_대형지수"
+
+    # [fix15] 미매핑 종목은 공유 "기타" 버킷으로 통합
+    # 기존 f"기타_{name}"은 종목마다 고유 섹터가 되어 "섹터당 1개" 필터를
+    # 구조적으로 무력화했음 (2026-07-06 사고: top10 중 6종목이 코스피 대형주로 쏠림)
+    # 공유 버킷이면 미매핑 종목이 아무리 많아도 최대 1종목만 선정됨
+    return "기타"
 
 
 # ============================================================
@@ -219,13 +246,15 @@ def calc_momentum_scores(etf_df: pd.DataFrame, last_friday: datetime) -> list:
             그 날짜에 가장 가까운 실제 거래일 종가를 base로 사용
     - yf.py range=2y 로 변경하여 데이터 충분히 확보
     """
-    # 126 영업일 ≈ 캘린더 186일, 여유 20일 추가해서 206일 전부터 탐색
-    BASE_SEARCH_DAYS = int(LOOKBACK * (7 / 5)) + 20   # ≈ 196
+    # [fix15] lookback 교정: 기존엔 탐색 여유 20일이 그대로 base에 더해져
+    # 실제 lookback이 명세(126영업일)보다 ~14영업일 길어지는 상수 편향이 있었음
+    # → base "목표일"(176캘린더일 전)과 데이터 "탐색 시작일"(여유 -20일)을 분리
+    BASE_TARGET_DAYS = int(LOOKBACK * (7 / 5))        # ≈ 176캘린더일 ≈ 126영업일
     tickers  = [f"{code}.KS" for code in etf_df["Code"]]
     name_map = dict(zip(etf_df["Code"], etf_df["Name"]))
 
-    # base 날짜: last_friday 기준 약 126 영업일 전 (캘린더 ~186일)
-    base_date = last_friday - timedelta(days=BASE_SEARCH_DAYS)
+    # base 목표일: 정확히 126 영업일 전. base는 이 날짜 이후 첫 거래일 종가.
+    base_date = last_friday - timedelta(days=BASE_TARGET_DAYS)
 
     print(f"\n📡 가격 데이터 수집 중 (기준일: {last_friday.strftime('%Y-%m-%d')})...")
     print(f"   모멘텀 base 기준일 탐색 시작: {base_date.strftime('%Y-%m-%d')} (~{LOOKBACK} 영업일 전)")
@@ -307,17 +336,23 @@ def calc_momentum_scores(etf_df: pd.DataFrame, last_friday: datetime) -> list:
 
             momentum = current / base - 1
 
+            # [fix15] 모멘텀 검증용: base 실제 거래일 (시그널 JSON에 함께 기록)
+            base_actual_date = base_series.index[0].strftime("%Y-%m-%d")
+
             # [fix10] 200% 캡 제거 — 실제 급등 종목을 오류로 걸러내는 잘못된 로직 삭제
             # 신규 상장 방어는 base_date 근방 데이터 없으면 제외하는 로직으로 충분
 
             name   = name_map.get(code, code)
             sector = classify_sector(name)
             scores.append({
-                "code":     code,
-                "name":     name,
-                "price":    round(current, 0),
-                "momentum": round(momentum, 6),
-                "sector":   sector,
+                "code":       code,
+                "name":       name,
+                "price":      round(current, 0),
+                "momentum":   round(momentum, 6),
+                "sector":     sector,
+                # [fix15] 모멘텀 검증 필드 — 실제 차트와 대조 가능하게 base 공개
+                "base_date":  base_actual_date,
+                "base_price": round(base, 0),
             })
         except Exception:
             continue
@@ -366,13 +401,17 @@ def fetch_vix(last_friday: datetime) -> tuple:
             raw_close.index = raw_close.index.tz_localize(None)
         raw_close = raw_close[raw_close.index <= pd.Timestamp(last_friday)].dropna()
         if len(raw_close) == 0:
-            return 15.0, "BULL"
+            print("⚠️ VIX 데이터 비어있음 → UNKNOWN (BULL 기본값 폐지)")
+            return None, "UNKNOWN"
         vix    = float(raw_close.iloc[-1])
         status = "BEAR" if vix > VIX_THRESHOLD else "BULL"
         return round(vix, 2), status
     except Exception as e:
-        print(f"⚠️ VIX 수집 실패 ({e}) → BULL 기본값")
-        return 15.0, "BULL"
+        # [fix15] fail-open 제거: 수집 실패 시 BULL로 열어버리면
+        # 진짜 폭락장(데이터 장애 동반 가능)에 BEAR 대피가 해제되는 방향으로 실패함
+        # → UNKNOWN 반환, 핸들러가 직전 시그널 carry-over 또는 안전 스킵 처리
+        print(f"⚠️ VIX 수집 실패 ({e}) → UNKNOWN (BULL 기본값 폐지)")
+        return None, "UNKNOWN"
 
 
 # ============================================================
@@ -420,22 +459,44 @@ def lambda_handler(event, context):
     print(f"\n✅ 최종 선정 {len(top_stocks)}개:")
     for i, s in enumerate(top_stocks, 1):
         print(f"   {i}. {s['name']}({s['code']}) "
-              f"섹터:{s['sector']} 모멘텀:{s['momentum']*100:+.1f}%")
+              f"섹터:{s['sector']} 모멘텀:{s['momentum']*100:+.1f}% "
+              f"[base {s['base_date']} {s['base_price']:,.0f} → 현재 {s['price']:,.0f}]")
 
     # ── VIX 조회 ─────────────────────────────────────────────
     vix, market_status = fetch_vix(last_friday)
     print(f"\n🌡  VIX: {vix} → {market_status}")
 
+    s3 = boto3.client("s3")
+
+    # [fix15] VIX 수집 실패(UNKNOWN) 시 직전 시그널의 VIX/상태를 carry-over
+    # carry-over마저 실패하면 UNKNOWN 그대로 저장 → Lambda B가 안전 스킵
+    vix_carried_over = False
+    if market_status == "UNKNOWN":
+        try:
+            prev_obj  = s3.get_object(Bucket=S3_BUCKET_NAME, Key=QUANT_SIGNAL_KEY)
+            prev_data = json.loads(prev_obj["Body"].read().decode("utf-8"))
+            prev_vix    = prev_data.get("vix")
+            prev_status = prev_data.get("market_status")
+            if prev_vix is not None and prev_status in ("BULL", "BEAR"):
+                vix, market_status = prev_vix, prev_status
+                vix_carried_over   = True
+                print(f"♻️ 직전 시그널 VIX carry-over: {vix} → {market_status} "
+                      f"(기준: {prev_data.get('updated_at', '?')})")
+            else:
+                print("⚠️ 직전 시그널에도 유효한 VIX 없음 → UNKNOWN 유지 (Lambda B 안전 스킵)")
+        except Exception as e:
+            print(f"⚠️ 직전 시그널 carry-over 실패 ({e}) → UNKNOWN 유지 (Lambda B 안전 스킵)")
+
     # ── S3 업로드 ─────────────────────────────────────────────
     output_data = {
-        "updated_at":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "market_status": market_status,
-        "vix":           vix,
-        "top_10_stocks": top_stocks,
+        "updated_at":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "market_status":    market_status,
+        "vix":              vix,
+        "vix_carried_over": vix_carried_over,
+        "top_10_stocks":    top_stocks,
     }
 
     try:
-        s3 = boto3.client("s3")
         body = json.dumps(output_data, ensure_ascii=False, indent=2)
 
         # ① Lambda B용 최신 시그널 (기존 경로, 덮어쓰기)

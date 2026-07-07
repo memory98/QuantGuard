@@ -1,5 +1,5 @@
 # korea.py — Lambda B: 국내 주식 주문 집행 모듈
-# 버전: v1.0.20260705.1
+# 버전: v1.0.20260707.1
 # 수정 이력:
 #   제미나이     : 실시간 현재가, 총자산 직접계산, BEAR 조기종료, 예수금 검증
 #   Claude fix1  : TR_ID 오류 수정 (TTTC0802U→TTTC0841U 등)
@@ -27,6 +27,11 @@ from config import (
     BEAR_LIMIT_RATE,
     CASH_RESERVE,
     FORCE_TEST_MODE,
+    MIN_ORDER_VALUE,
+    REINVEST_CAP_RATIO,
+    SELL_SETTLE_WAIT_SECS,
+    SELL_SETTLE_POLL_INTERVAL,
+    PRICE_CALL_SLEEP,
 )
 
 BULL_LIMIT_RATE     = 0.01
@@ -244,6 +249,88 @@ def execute_order(token: str, code: str, qty: int,
 
 
 # ============================================================
+# [fix15] 매도 체결 확인 polling — 고정 10초 대기 대체
+# ============================================================
+
+def wait_sell_settlement(token: str, full_sell_codes: set) -> bool:
+    """전량 매도 종목의 보유수량이 0이 될 때까지 잔고를 polling.
+
+    - 반환 True  : 전량 매도 체결 확인 (또는 부분 매도만 있어 단기 대기로 충분)
+    - 반환 False : 제한시간 내 미체결 잔존 → 호출부가 매수 예산을 보수적으로 처리
+    - polling 간격은 KIS 유량제한(EGW00201)을 고려해 SELL_SETTLE_POLL_INTERVAL초
+    """
+    if not full_sell_codes:
+        # 부분 매도만 있는 경우: 수량 추적 대신 짧은 고정 대기
+        print(f"⏳ 부분 매도 체결 대기 ({SELL_SETTLE_POLL_INTERVAL}초)...")
+        time.sleep(SELL_SETTLE_POLL_INTERVAL)
+        return True
+
+    deadline = time.time() + SELL_SETTLE_WAIT_SECS
+    while time.time() < deadline:
+        time.sleep(SELL_SETTLE_POLL_INTERVAL)
+        try:
+            holdings, _ = fetch_present_holdings(token)
+        except Exception as e:
+            print(f"⚠️ 체결확인 잔고조회 실패 ({e}) → 다음 주기 재시도")
+            continue
+        pending = [c for c in full_sell_codes if holdings.get(c, {}).get("qty", 0) > 0]
+        if not pending:
+            print("✅ 매도 전량 체결 확인")
+            return True
+        print(f"⏳ 매도 체결 대기 중... 미체결 {len(pending)}종목: {pending}")
+
+    print(f"⚠️ {SELL_SETTLE_WAIT_SECS}초 내 전량 매도 미체결 → 매수 예산 보수 처리")
+    return False
+
+
+# ============================================================
+# [fix15] 잔여현금 재투입 — 모멘텀 순위 순환식 + 종목당 상한
+# ============================================================
+
+def reinvest_leftover_cash(token: str, leftover_cash: float,
+                           candidates: list, kr_budget: float,
+                           name_map: dict) -> list:
+    """1차 매수 후 남은 현금을 모멘텀 순위 순으로 1주씩 순환 배분.
+
+    - candidates: [{"code", "qty_total", "limit_price"}] 모멘텀 순 정렬
+    - 종목당 평가액이 kr_budget * REINVEST_CAP_RATIO 를 넘지 않도록 상한 적용
+    - 수량을 먼저 시뮬레이션으로 확정한 뒤 종목당 1회 주문으로 집행 (호출 최소화)
+    """
+    cap    = kr_budget * REINVEST_CAP_RATIO
+    extra  = {c["code"]: 0 for c in candidates}
+    value  = {c["code"]: c["qty_total"] * c["limit_price"] for c in candidates}
+
+    progress = True
+    while progress:
+        progress = False
+        for c in candidates:
+            code, price = c["code"], c["limit_price"]
+            if price <= 0:
+                continue
+            if leftover_cash >= price and value[code] + price <= cap:
+                extra[code]   += 1
+                value[code]   += price
+                leftover_cash -= price
+                progress       = True
+
+    orders = []
+    for c in candidates:
+        code, price = c["code"], c["limit_price"]
+        qty = extra[code]
+        if qty <= 0:
+            continue
+        ok = execute_order(token, code, qty, is_buy=True, limit_price=price)
+        orders.append({"code": code, "qty": qty, "limit_price": price, "ok": ok})
+        print(f"♻️ [재투입 매수] {name_map.get(code, code)}({code}) {qty}주 @ {price:,}원"
+              + ("" if ok else " ❌ 실패"))
+        time.sleep(PRICE_CALL_SLEEP)
+
+    if not orders:
+        print(f"💤 재투입 대상 없음 (잔여 {leftover_cash:,.0f}원, 종목당 상한 {cap:,.0f}원)")
+    return orders
+
+
+# ============================================================
 # 메인 리밸런싱 함수
 # ============================================================
 
@@ -282,6 +369,13 @@ def run_korea_rebalancing(token: str, fallback_total_equity: int = 0) -> dict:
     market_status = signal_data.get("market_status", "BULL")
     target_stocks = signal_data.get("top_10_stocks", [])
 
+    # [fix15] VIX 판별 불가(UNKNOWN) → 매매 없이 안전 스킵
+    # Lambda A가 VIX 수집·carry-over 모두 실패했을 때만 오는 상태.
+    # BULL로 가정하고 매수하는 것보다 한 주 쉬는 쪽이 안전.
+    if market_status == "UNKNOWN":
+        print("⚠️ VIX 판별 불가(UNKNOWN) → 이번 주 리밸런싱 스킵 (안전 유지)")
+        return {"result": "VIX_UNKNOWN_SKIP", "sell_orders": [], "buy_orders": []}
+
     if market_status == "BEAR":
         print("🚨 BEAR 시그널 → 전량 지정가(-1%) 매도 후 현금 대피")
         current_holdings, _ = fetch_present_holdings(token)
@@ -295,22 +389,52 @@ def run_korea_rebalancing(token: str, fallback_total_equity: int = 0) -> dict:
                 "buy_orders":    [],
             }
 
-        bear_sells = []
+        # [fix15] rt_cd 검증 + 실패 시 시장가 재시도
+        # 기존엔 execute_order 반환값을 무시하고 무조건 '대피 완료'로 보고했음.
+        # 폭락장 갭하락으로 -1% 지정가가 거부/미체결 소지가 있는 상황에서
+        # 대피 실패를 성공으로 오보고하는 최악의 시나리오 차단.
+        bear_sells      = []
+        executed_orders = []
+        failed_sells    = []
+        name_map        = {c: i["name"] for c, i in current_holdings.items()}
+
         for code, info in current_holdings.items():
             qty      = info["qty"]
             realtime = get_realtime_price(token, code)
+            time.sleep(PRICE_CALL_SLEEP)
             price    = realtime if realtime > 0 else info["prpr"]
             limit_p  = calc_limit_price(price, BEAR_LIMIT_RATE)
-            execute_order(token, code, qty, is_buy=False, limit_price=limit_p)
-            bear_sells.append((code, qty))
-            print(f"♻️ [BEAR 매도] {info['name']}({code}) "
-                  f"현재가:{price:,} → 지정가:{limit_p:,} {qty}주")
+
+            ok      = execute_order(token, code, qty, is_buy=False, limit_price=limit_p)
+            retried = False
+            if not ok:
+                print(f"⚠️ [BEAR 매도 실패] {info['name']}({code}) 지정가 거부 → 시장가 재시도")
+                time.sleep(1)
+                ok      = execute_order(token, code, qty, is_buy=False, limit_price=0)
+                retried = True
+
+            executed_orders.append({
+                "side": "SELL", "code": code, "qty": qty,
+                "limit_price": limit_p if not retried else 0,
+                "ok": ok, "retried": retried,
+            })
+            if ok:
+                bear_sells.append((code, qty))
+                print(f"♻️ [BEAR 매도] {info['name']}({code}) "
+                      f"현재가:{price:,} → 지정가:{limit_p:,} {qty}주"
+                      + (" (시장가 재시도)" if retried else ""))
+            else:
+                failed_sells.append((code, qty))
+                print(f"❌ [BEAR 매도 최종 실패] {info['name']}({code}) {qty}주 — 수동 확인 필요")
 
         return {
-            "result":        "BEAR_SHELTER_EXECUTED",
-            "market_status": "BEAR",
-            "sell_orders":   bear_sells,
-            "buy_orders":    [],
+            "result":          "BEAR_SHELTER_EXECUTED",
+            "market_status":   "BEAR",
+            "sell_orders":     bear_sells,
+            "buy_orders":      [],
+            "executed_orders": executed_orders,
+            "failed_sells":    failed_sells,
+            "name_map":        name_map,
         }
 
     if not target_stocks:
@@ -350,27 +474,47 @@ def run_korea_rebalancing(token: str, fallback_total_equity: int = 0) -> dict:
 
     kr_budget    = total_asset * BUDGET_RATIO
     budget_per   = kr_budget / NUM_TARGETS if NUM_TARGETS > 0 else 0
-    target_codes = [s["code"] for s in target_stocks[:NUM_TARGETS]]
+    targets      = target_stocks[:NUM_TARGETS]
+    target_codes = [s["code"] for s in targets]
     print(f"🎯 국내 배정 예산: {kr_budget:,.0f}원 / 종목당: {budget_per:,.0f}원")
 
-    sell_orders = []
-    buy_orders  = []
+    # [fix15] 영수증 종목명 표기용 매핑 (시그널 name + 보유종목 prdt_name)
+    name_map = {s["code"]: s.get("name", s["code"]) for s in targets}
+    for _c, _i in current_holdings.items():
+        name_map.setdefault(_c, _i.get("name", _c))
+
+    sell_orders     = []     # (code, qty)
+    buy_orders      = []     # (code, qty, price)
+    skipped_band    = []     # [fix15] 노트레이드 밴드로 스킵한 비중조정 주문
+    full_sell_codes = set()  # 순위 이탈 전량 매도 종목 (체결 polling 대상)
 
     for code, info in current_holdings.items():
         realtime = get_realtime_price(token, code)
+        time.sleep(PRICE_CALL_SLEEP)   # [fix15] 유량제한 방지
         price    = realtime if realtime > 0 else info["prpr"]
 
         if code not in target_codes:
+            # 순위 이탈 종목: 전량 매도 (밴드 적용 안 함 — 전략의 핵심 신호)
             sell_orders.append((code, info["qty"]))
+            full_sell_codes.add(code)
         else:
             target_qty = int(budget_per // price) if price > 0 else 0
             diff       = target_qty - info["qty"]
             if diff < 0:
-                sell_orders.append((code, abs(diff)))
+                # [fix15] 노트레이드 밴드: 비중 미세조정 매도는 스킵 (슬리피지 절감)
+                trade_value = abs(diff) * price
+                if trade_value < MIN_ORDER_VALUE:
+                    skipped_band.append({"code": code, "side": "SELL",
+                                         "qty": abs(diff), "value": trade_value})
+                    print(f"🙅 [밴드 스킵] {name_map.get(code, code)}({code}) "
+                          f"매도 {abs(diff)}주 ≈{trade_value:,.0f}원 < {MIN_ORDER_VALUE:,}원")
+                else:
+                    sell_orders.append((code, abs(diff)))
 
-    for stock in target_stocks[:NUM_TARGETS]:
+    for stock in targets:
         code     = stock["code"]
         realtime = get_realtime_price(token, code)
+        time.sleep(PRICE_CALL_SLEEP)   # [fix15] 유량제한 방지
         price    = realtime if realtime > 0 else int(stock["price"])
 
         if price == 0:
@@ -382,62 +526,118 @@ def run_korea_rebalancing(token: str, fallback_total_equity: int = 0) -> dict:
         diff         = target_qty - already_have
 
         if diff > 0:
-            buy_orders.append((code, diff, price))
+            # [fix15] 노트레이드 밴드: 이미 보유 중인 종목의 미세 추가매수는 스킵
+            # (신규 진입 종목은 diff가 종목당 예산 규모라 밴드에 걸리지 않음)
+            trade_value = diff * price
+            if already_have > 0 and trade_value < MIN_ORDER_VALUE:
+                skipped_band.append({"code": code, "side": "BUY",
+                                     "qty": diff, "value": trade_value})
+                print(f"🙅 [밴드 스킵] {name_map.get(code, code)}({code}) "
+                      f"매수 {diff}주 ≈{trade_value:,.0f}원 < {MIN_ORDER_VALUE:,}원")
+            else:
+                buy_orders.append((code, diff, price))
 
-    print(f"📋 매도 {len(sell_orders)}건 / 매수 {len(buy_orders)}건")
+    print(f"📋 매도 {len(sell_orders)}건 / 매수 {len(buy_orders)}건 / "
+          f"밴드 스킵 {len(skipped_band)}건")
+
+    executed_orders = []
 
     if sell_orders:
         print(f"⏳ 매도 {len(sell_orders)}건 집행 중...")
         for code, qty in sell_orders:
             realtime = get_realtime_price(token, code)
+            time.sleep(PRICE_CALL_SLEEP)
             price    = realtime if realtime > 0 else current_holdings.get(code, {}).get("prpr", 0)
             limit_p  = calc_limit_price(price, BEAR_LIMIT_RATE)
-            execute_order(token, code, qty, is_buy=False, limit_price=limit_p)
-            print(f"♻️ [매도] {code} 현재가:{price:,} → 지정가:{limit_p:,} {qty}주")
+            ok       = execute_order(token, code, qty, is_buy=False, limit_price=limit_p)
+            executed_orders.append({"side": "SELL", "code": code, "qty": qty,
+                                    "limit_price": limit_p, "ok": ok})
+            print(f"♻️ [매도] {name_map.get(code, code)}({code}) "
+                  f"현재가:{price:,} → 지정가:{limit_p:,} {qty}주")
 
-        print("⏳ 매도 체결 대기 (10초)...")
-        time.sleep(10)
+        # [fix15] 고정 10초 대기 → 체결확인 polling
+        settled = wait_sell_settlement(token, full_sell_codes)
     else:
+        settled = True
         print("✅ 매도 종목 없음")
+
+    reinvest_orders        = []
+    buys_skipped_unsettled = False
 
     if buy_orders:
         available_cash = fetch_available_cash(token)
+
         if available_cash <= 0:
-            # [fix12] TTTC8408R이 0 반환 시 tot_evlu_amt 기반 운용 예산으로 대체
-            available_cash = total_asset
-            print(f"⚠️ 예수금 조회 0원 → 운용 예산으로 대체: {available_cash:,}원")
+            if not sell_orders:
+                # [fix12 유지] 매도가 없었는데 0원 → 100% 현금 상태에서
+                # TTTC8408R이 0을 반환하는 quirk로 간주, 운용 예산으로 대체
+                available_cash = total_asset
+                print(f"⚠️ 예수금 조회 0원 (매도 없음) → 운용 예산으로 대체: {available_cash:,}원")
+            else:
+                # [fix15] 매도가 있었는데 예수금 0원 → 미체결 가능성.
+                # 총평가액 대체(구 fix12)는 없는 돈으로 매수를 시도하는 셈이라 폐지.
+                buys_skipped_unsettled = True
+                reason = "매도 미체결" if not settled else "체결 확인됐으나 예수금 미반영"
+                print(f"⚠️ {reason} + 예수금 0원 → 매수 전체 스킵 (예산 과다계산 방지)")
         else:
             print(f"💵 매수 전 가용 예수금: {available_cash:,}원")
-        print(f"⏳ 매수 {len(buy_orders)}건 집행 중...")
 
-        for code, qty, c_price in buy_orders:
-            final_price = get_realtime_price(token, code)
-            use_price   = final_price if final_price > 0 else c_price
-            limit_p     = calc_limit_price(use_price, BULL_LIMIT_RATE)
-            required    = limit_p * qty
+        if not buys_skipped_unsettled:
+            print(f"⏳ 매수 {len(buy_orders)}건 집행 중...")
+            reinvest_candidates = []   # [fix15] 재투입 후보 (모멘텀 순 유지)
 
-            if required > available_cash:
-                adjusted = int(available_cash // limit_p)
-                if adjusted <= 0:
-                    print(f"⚠️ {code} 예수금 부족 ({available_cash:,}원) → 스킵")
-                    continue
-                print(f"⚠️ {code} 예수금 부족 → {qty}주 → {adjusted}주로 축소")
-                qty      = adjusted
-                required = limit_p * qty
+            for code, qty, c_price in buy_orders:
+                final_price = get_realtime_price(token, code)
+                time.sleep(PRICE_CALL_SLEEP)
+                use_price   = final_price if final_price > 0 else c_price
+                limit_p     = calc_limit_price(use_price, BULL_LIMIT_RATE)
+                required    = limit_p * qty
 
-            success = execute_order(token, code, qty, is_buy=True, limit_price=limit_p)
-            if success:
-                available_cash -= required
-            print(f"🔥 [매수] {code} 현재가:{use_price:,} → 지정가:{limit_p:,} {qty}주")
+                if required > available_cash:
+                    adjusted = int(available_cash // limit_p)
+                    if adjusted <= 0:
+                        print(f"⚠️ {code} 예수금 부족 ({available_cash:,}원) → 스킵")
+                        continue
+                    print(f"⚠️ {code} 예수금 부족 → {qty}주 → {adjusted}주로 축소")
+                    qty      = adjusted
+                    required = limit_p * qty
+
+                success = execute_order(token, code, qty, is_buy=True, limit_price=limit_p)
+                executed_orders.append({"side": "BUY", "code": code, "qty": qty,
+                                        "limit_price": limit_p, "ok": success})
+                if success:
+                    available_cash -= required
+                    already = current_holdings.get(code, {}).get("qty", 0)
+                    reinvest_candidates.append({"code": code,
+                                                "qty_total": already + qty,
+                                                "limit_price": limit_p})
+                print(f"🔥 [매수] {name_map.get(code, code)}({code}) "
+                      f"현재가:{use_price:,} → 지정가:{limit_p:,} {qty}주")
+
+            # [fix15] 잔여현금 재투입 (모멘텀 순위 순환식, 종목당 상한 15%)
+            if available_cash > 0 and reinvest_candidates:
+                print(f"💰 잔여현금 {available_cash:,.0f}원 재투입 시도...")
+                reinvest_orders = reinvest_leftover_cash(
+                    token, available_cash, reinvest_candidates, kr_budget, name_map)
+                executed_orders += [{"side": "BUY", "code": o["code"], "qty": o["qty"],
+                                     "limit_price": o["limit_price"], "ok": o["ok"],
+                                     "reinvest": True} for o in reinvest_orders]
     else:
         print("✅ 매수 종목 없음")
 
     print("🏁 리밸런싱 완료")
     return {
-        "result":        "BULL_REBALANCING_SUCCESS",
-        "market_status": "BULL",
-        "sell_orders":   sell_orders,
-        "buy_orders":    buy_orders,
-        "sell_count":    len(sell_orders),
-        "buy_count":     len(buy_orders),
+        "result":                 "BULL_REBALANCING_SUCCESS",
+        "market_status":          "BULL",
+        "sell_orders":            sell_orders,
+        "buy_orders":             buy_orders,
+        "sell_count":             len(sell_orders),
+        "buy_count":              len(buy_orders),
+        "executed_orders":        executed_orders,
+        "skipped_band":           skipped_band,
+        "reinvest_orders":        reinvest_orders,
+        "buys_skipped_unsettled": buys_skipped_unsettled,
+        "sell_settled":           settled,
+        "name_map":               name_map,
+        "targets":                targets,
     }
