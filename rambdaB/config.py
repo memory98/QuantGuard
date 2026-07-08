@@ -1,5 +1,5 @@
 # config.py — 글로벌 세팅 값 전용 (rambdaB)
-# 버전: v1.0.20260707.1
+# 버전: v1.0.20260708.1
 import os
 
 # ── S3 ──────────────────────────────────────────────────────
@@ -8,8 +8,9 @@ SIGNAL_FILE_KEY  = "latest_signal.json"
 QUANT_SIGNAL_KEY = "quant_signals.json"
 
 # ── 운용 파라미터 ────────────────────────────────────────────
-NUM_TARGETS  = 10   # 최종 매수 종목 수
-BUDGET_RATIO = 1.0  # 국내주식 투자 비율 (1.0=100%, 0.5=50%)
+NUM_TARGETS      = 10   # 최종 매수 종목 수
+EXIT_RANK_BUFFER = 15   # [fix16] 순위 히스테리시스: 보유 종목은 이 순위 밖으로 밀려야 매도
+BUDGET_RATIO     = 1.0  # 국내주식 투자 비율 (1.0=100%, 0.5=50%)
 
 VIX_TICKER      = "^VIX"
 VIX_THRESHOLD   = 30.0   # BEAR 전환 임계값

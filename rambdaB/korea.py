@@ -1,5 +1,5 @@
 # korea.py — Lambda B: 국내 주식 주문 집행 모듈
-# 버전: v1.0.20260707.1
+# 버전: v1.0.20260708.1
 # 수정 이력:
 #   제미나이     : 실시간 현재가, 총자산 직접계산, BEAR 조기종료, 예수금 검증
 #   Claude fix1  : TR_ID 오류 수정 (TTTC0802U→TTTC0841U 등)
@@ -23,6 +23,7 @@ from config import (
     S3_BUCKET_NAME,
     QUANT_SIGNAL_KEY,
     NUM_TARGETS,
+    EXIT_RANK_BUFFER,
     BUDGET_RATIO,
     BEAR_LIMIT_RATE,
     CASH_RESERVE,
@@ -369,6 +370,15 @@ def run_korea_rebalancing(token: str, fallback_total_equity: int = 0) -> dict:
     market_status = signal_data.get("market_status", "BULL")
     target_stocks = signal_data.get("top_10_stocks", [])
 
+    # [fix16] 순위 히스테리시스: candidates(1~15위) → code:rank 매핑
+    # 구버전 시그널(candidates 없음) 폴백: top_10_stocks만으로 1~10위 매핑
+    # (11~15위 정보 없음 → 사실상 비활성, 기존 동작과 동일)
+    _candidates = signal_data.get("candidates")
+    if _candidates:
+        rank_map = {c["code"]: c.get("rank") for c in _candidates}
+    else:
+        rank_map = {s["code"]: i for i, s in enumerate(target_stocks, 1)}
+
     # [fix15] VIX 판별 불가(UNKNOWN) → 매매 없이 안전 스킵
     # Lambda A가 VIX 수집·carry-over 모두 실패했을 때만 오는 상태.
     # BULL로 가정하고 매수하는 것보다 한 주 쉬는 쪽이 안전.
@@ -493,11 +503,8 @@ def run_korea_rebalancing(token: str, fallback_total_equity: int = 0) -> dict:
         time.sleep(PRICE_CALL_SLEEP)   # [fix15] 유량제한 방지
         price    = realtime if realtime > 0 else info["prpr"]
 
-        if code not in target_codes:
-            # 순위 이탈 종목: 전량 매도 (밴드 적용 안 함 — 전략의 핵심 신호)
-            sell_orders.append((code, info["qty"]))
-            full_sell_codes.add(code)
-        else:
+        if code in target_codes:
+            # 상위 10위 이내 보유 종목: 기존 로직 그대로 (밴드 적용 비중조정)
             target_qty = int(budget_per // price) if price > 0 else 0
             diff       = target_qty - info["qty"]
             if diff < 0:
@@ -510,6 +517,15 @@ def run_korea_rebalancing(token: str, fallback_total_equity: int = 0) -> dict:
                           f"매도 {abs(diff)}주 ≈{trade_value:,.0f}원 < {MIN_ORDER_VALUE:,}원")
                 else:
                     sell_orders.append((code, abs(diff)))
+        elif rank_map.get(code) is not None and rank_map[code] <= EXIT_RANK_BUFFER:
+            # [fix16 히스테리시스] 11~15위: 매도하지 않고 보유 유지, 비중조정도 하지 않음
+            # 진입은 top10, 퇴출은 15위 밖 — 경계 종목의 주간 왕복매매 제거
+            print(f"🛡 [히스테리시스 유지] {name_map.get(code, code)}({code}) "
+                  f"현재 순위 {rank_map[code]}위 (퇴출 기준 {EXIT_RANK_BUFFER}위 밖)")
+        else:
+            # 15위 밖(또는 랭크 정보 없음, 구버전 시그널 포함): 전량 매도 — 밴드 적용 안 함
+            sell_orders.append((code, info["qty"]))
+            full_sell_codes.add(code)
 
     for stock in targets:
         code     = stock["code"]

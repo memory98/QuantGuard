@@ -1,7 +1,7 @@
 """
 signal_generator.py — Lambda A: 시그널 생성기
 ========================================================
-버전: v1.0.20260707.1
+버전: v1.0.20260708.1
 실행: 매주 월요일 15:05 KST
 EventBridge: 타임존 Asia/Seoul / Cron: 5 15 ? * MON *
 Lambda 설정: Timeout 12분 / Memory 512MB
@@ -42,8 +42,9 @@ from config import (
 )
 
 # ── 설정 ────────────────────────────────────────────────────
-NUM_TARGETS   = 10     # 최종 매수 종목 수
-VOLUME_CUTOFF = 100    # 거래대금 컷오프 (상위 N개)
+NUM_TARGETS    = 10     # 최종 매수 종목 수
+NUM_CANDIDATES = 15     # [fix16] 순위 히스테리시스용 확장 후보 풀 (섹터당 1개 유지, 11~15위는 보유 유지 판정에만 사용)
+VOLUME_CUTOFF  = 100    # 거래대금 컷오프 (상위 N개)
 LOOKBACK      = 126    # 모멘텀 계산 기간 (영업일, 약 6개월)
 
 # [fix7] 신규 상장 ETF 오염 방어
@@ -453,10 +454,12 @@ def lambda_handler(event, context):
 
     print(f"\n📊 모멘텀 계산 완료: {len(all_scores)}개")
 
-    # ── 섹터별 1개 제한 → 상위 10개 ─────────────────────────
-    top_stocks = apply_sector_filter(all_scores, NUM_TARGETS)
+    # ── [fix16] 섹터별 1개 제한 → 상위 15개(후보풀) → 앞 10개가 매수 대상 ──
+    # apply_sector_filter는 모멘텀 순 순회라 후보풀 앞 10개 = 기존 top10과 동일
+    candidate_stocks = apply_sector_filter(all_scores, NUM_CANDIDATES)
+    top_stocks       = candidate_stocks[:NUM_TARGETS]
 
-    print(f"\n✅ 최종 선정 {len(top_stocks)}개:")
+    print(f"\n✅ 최종 선정 {len(top_stocks)}개 (히스테리시스 후보풀 {len(candidate_stocks)}개):")
     for i, s in enumerate(top_stocks, 1):
         print(f"   {i}. {s['name']}({s['code']}) "
               f"섹터:{s['sector']} 모멘텀:{s['momentum']*100:+.1f}% "
@@ -487,13 +490,19 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"⚠️ 직전 시그널 carry-over 실패 ({e}) → UNKNOWN 유지 (Lambda B 안전 스킵)")
 
+    # [fix16] 순위 히스테리시스용 확장 후보풀 (1~15위, rank 필드 포함)
+    candidates_with_rank = [
+        {**s, "rank": i} for i, s in enumerate(candidate_stocks, 1)
+    ]
+
     # ── S3 업로드 ─────────────────────────────────────────────
     output_data = {
         "updated_at":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "market_status":    market_status,
         "vix":              vix,
         "vix_carried_over": vix_carried_over,
-        "top_10_stocks":    top_stocks,
+        "top_10_stocks":    top_stocks,           # 기존 필드 유지 (하위호환)
+        "candidates":       candidates_with_rank,  # [fix16] 1~15위 전체, rank 포함
     }
 
     try:
