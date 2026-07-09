@@ -1,5 +1,5 @@
 # lambda_function.py — Lambda B: 메인 제어 타워
-# 버전: v1.0.20260707.1
+# 버전: v1.0.20260709.1
 # [변경 이력]
 #   기능 1  : 주문 집행 완료 후 텔레그램 영수증 발송
 #   기능 2  : 핵심 로직 전체 try-except + traceback 텔레그램 에러 자백
@@ -250,9 +250,11 @@ def fetch_total_equity(token: str) -> int:
         "appsecret":     KIS_APPSECRET,
         "tr_id":         "TTTC8434R",
     }
+    # [fix17] 쿼리 파라미터 공식 규격(TTTC8434R) 정리 — korea.py와 동일 TR
     params = (
         f"?CANO={KIS_ACCOUNT}&ACNT_PRDT_CD={KIS_PRDT_CODE}"
-        "&AFHR_FLG=00&OVR_FLG=00&PRCS_DVSN=00&INQR_DVSN=00"
+        "&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=02&UNPR_DVSN=01"
+        "&FUND_STTL_ICLD_YN=N&FNCG_AMT_AUTO_RDPT_YN=N&PRCS_DVSN=00"
         "&CTX_AREA_FK100=&CTX_AREA_NK100="
     )
     try:

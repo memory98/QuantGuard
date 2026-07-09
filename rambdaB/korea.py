@@ -1,5 +1,5 @@
 # korea.py — Lambda B: 국내 주식 주문 집행 모듈
-# 버전: v1.0.20260708.1
+# 버전: v1.0.20260709.1
 # 수정 이력:
 #   제미나이     : 실시간 현재가, 총자산 직접계산, BEAR 조기종료, 예수금 검증
 #   Claude fix1  : TR_ID 오류 수정 (TTTC0802U→TTTC0841U 등)
@@ -123,9 +123,12 @@ def fetch_present_holdings(token: str, max_retries: int = 3) -> tuple:
       (총자산 0원 오인 → 매매 전체 스킵 사고 방지)
     """
     http = urllib3.PoolManager()
+    # [fix17] 쿼리 파라미터 공식 규격(TTTC8434R) 정리
+    # 기존 AFHR_FLG/OVR_FLG는 규격에 없는 이름, 필수 파라미터 다수 누락 상태였음
     url  = (f"{URL_BASE}/uapi/domestic-stock/v1/trading/inquire-balance"
             f"?CANO={KIS_ACCOUNT}&ACNT_PRDT_CD={KIS_PRDT_CODE}"
-            "&AFHR_FLG=00&OVR_FLG=00&PRCS_DVSN=00&INQR_DVSN=00"
+            "&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=02&UNPR_DVSN=01"
+            "&FUND_STTL_ICLD_YN=N&FNCG_AMT_AUTO_RDPT_YN=N&PRCS_DVSN=00"
             "&CTX_AREA_FK100=&CTX_AREA_NK100=")
     headers = {
         "content-type":  "application/json",
@@ -151,7 +154,10 @@ def fetch_present_holdings(token: str, max_retries: int = 3) -> tuple:
         if rt_cd == "0" and output2:
             holdings = {}
             for item in res_data.get("output1", []):
-                qty  = int(item.get("hldn_qty", 0))
+                # [fix17] hldn_qty → hldg_qty: KIS 공식 응답 필드명 오타 수정
+                # 존재하지 않는 필드를 읽어 항상 0 → 보유 종목이 빈 dict로 인식되던 버그
+                # (0709 테스트 '매도 0건 + 전량 신규매수' 사고 원인)
+                qty  = int(item.get("hldg_qty", 0))
                 code = item.get("pdno", "")
                 if code and qty > 0:
                     holdings[code] = {
