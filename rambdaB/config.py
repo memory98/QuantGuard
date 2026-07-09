@@ -32,8 +32,7 @@ CASH_RESERVE = int(os.environ.get("CASH_RESERVE", "0"))
 # True  → 주문 API 전송만 차단(Mock), 나머지 전 공정 100% 정상 실행
 # False → 실전 모드, 실제 KIS API로 주문 전송
 # ⚠️ 배포 전 반드시 False로 변경할 것!
-# [임시] 2026-07-09 fix17 잔고 파싱 실계좌 검증용 True — 검증 후 즉시 False 복원
-FORCE_TEST_MODE = True
+FORCE_TEST_MODE = False
 
 # ── Lambda 스케줄 (EventBridge 설정 참고용) ──────────────────
 # [fix15] 권장 시각 변경: 15:15는 동시호가(15:20~15:30) 직전이라 연속거래가
