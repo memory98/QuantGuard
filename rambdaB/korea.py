@@ -1,5 +1,5 @@
 # korea.py — Lambda B: 국내 주식 주문 집행 모듈
-# 버전: v1.0.20260709.1
+# 버전: v1.0.20260713.1
 # 수정 이력:
 #   제미나이     : 실시간 현재가, 총자산 직접계산, BEAR 조기종료, 예수금 검증
 #   Claude fix1  : TR_ID 오류 수정 (TTTC0802U→TTTC0841U 등)
@@ -178,7 +178,19 @@ def fetch_present_holdings(token: str, max_retries: int = 3) -> tuple:
 
 
 def fetch_available_cash(token: str) -> int:
-    """주문 가능 예수금 조회 (TR_ID: TTTC8408R)"""
+    """매수 가능 금액 조회 (TR_ID: TTTC8908R, 매수가능조회 v1_국내주식-007)
+
+    [fix18] TR_ID + 응답 필드명 이중 오류 교정 — 이 함수는 도입 이래 항상 0원을 반환했음
+    - TR_ID: TTTC8408R(존재하지 않는 TR) → TTTC8908R (KIS 공식 샘플 기준)
+    - 필드: ord_psbl_cash_amt(규격에 없음) → nrcvb_buy_amt(미수없는매수금액)
+      공식 문서 지침: "미수 사용 X: nrcvb_buy_amt 확인" — 예수금 + 당일 매도대금
+      재사용분 포함, 미수/신용은 미포함 (보수적 금액이라 현금계좌 운용에 적합)
+    - 폴백: ord_psbl_cash(주문가능현금) + ruse_psbl_amt(재사용가능금액)
+    - 근거: github.com/koreainvestment/open-trading-api
+      examples_llm/domestic_stock/inquire_psbl_order (2026-07-13 확인)
+    - 실사고: 2026-07-13 실전 리밸런싱에서 매도 5건 체결 후 이 함수가 0원을 반환해
+      매수 전체 스킵. fix11 '100% 현금 상태 0원 quirk'의 실제 원인도 이것이었음
+    """
     http = urllib3.PoolManager()
     url  = (f"{URL_BASE}/uapi/domestic-stock/v1/trading/inquire-psbl-order"
             f"?CANO={KIS_ACCOUNT}&ACNT_PRDT_CD={KIS_PRDT_CODE}"
@@ -189,15 +201,25 @@ def fetch_available_cash(token: str) -> int:
         "authorization": f"Bearer {token}",
         "appkey":        KIS_APPKEY,
         "appsecret":     KIS_APPSECRET,
-        "tr_id":         "TTTC8408R",
+        "tr_id":         "TTTC8908R",
     }
     try:
         res      = http.request("GET", url, headers=headers)
         res_data = json.loads(res.data.decode("utf-8"))
         if res_data.get("rt_cd") == "0":
-            return int(float(res_data["output"].get("ord_psbl_cash_amt", 0)))
+            out   = res_data.get("output", {})
+            nrcvb = int(float(out.get("nrcvb_buy_amt") or 0))
+            cash  = int(float(out.get("ord_psbl_cash") or 0))
+            ruse  = int(float(out.get("ruse_psbl_amt") or 0))
+            print(f"💵 매수가능조회: 미수없는매수금액 {nrcvb:,}원 "
+                  f"(주문가능현금 {cash:,}원 + 재사용가능 {ruse:,}원 등)")
+            if nrcvb > 0:
+                return nrcvb
+            return cash + ruse
+        print(f"⚠️ 매수가능조회 비정상 응답: rt_cd={res_data.get('rt_cd')}, "
+              f"msg_cd={res_data.get('msg_cd', '')}, msg1={res_data.get('msg1', '')}")
     except Exception as e:
-        print(f"⚠️ 예수금 조회 실패: {e}")
+        print(f"⚠️ 매수가능조회 실패: {e}")
     return 0
 
 
