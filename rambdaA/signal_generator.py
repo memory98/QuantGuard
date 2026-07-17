@@ -1,7 +1,7 @@
 """
 signal_generator.py — Lambda A: 시그널 생성기
 ========================================================
-버전: v1.0.20260708.1
+버전: v1.0.20260716.1
 실행: 매주 월요일 15:05 KST
 EventBridge: 타임존 Asia/Seoul / Cron: 5 15 ? * MON *
 Lambda 설정: Timeout 12분 / Memory 512MB
@@ -45,6 +45,15 @@ from config import (
 NUM_TARGETS    = 10     # 최종 매수 종목 수
 NUM_CANDIDATES = 15     # [fix16] 순위 히스테리시스용 확장 후보 풀 (섹터당 1개 유지, 11~15위는 보유 유지 판정에만 사용)
 VOLUME_CUTOFF  = 100    # 거래대금 컷오프 (상위 N개)
+
+# [fix19] 국내 드로다운 가드 — VIX(미국 지수)가 국내 단독 폭락에 장님인 문제 보완
+# 2026-07 실사고: 코스피 20일 고점 대비 -26% 폭락 동안 VIX는 15~17 유지 → BEAR 미발동
+# 백테스트(KODEX200 2년, 월요일 주기, 왕복 0.4% 비용): DD-8%/대칭 재진입 기준
+#   수익률 +219.2%(베이스라인 +221.5%와 동일 수준), MDD -15.9%(베이스라인 -26.6%)
+#   재진입은 대칭(동일 임계 회복 시 복귀)이 히스테리시스형보다 우세했음
+DD_GUARD_TICKER    = "069500"  # KODEX 200 (KOSPI200 추종)
+DD_GUARD_LOOKBACK  = 20        # 고점 탐색 구간 (거래일)
+DD_GUARD_THRESHOLD = -0.08     # 이 이하로 빠지면 BEAR (재진입: 이 위로 회복하면 자동 BULL)
 LOOKBACK      = 126    # 모멘텀 계산 기간 (영업일, 약 6개월)
 
 # [fix7] 신규 상장 ETF 오염 방어
@@ -416,6 +425,37 @@ def fetch_vix(last_friday: datetime) -> tuple:
 
 
 # ============================================================
+# 6-1. [fix19] 국내 드로다운 가드
+# ============================================================
+
+def fetch_domestic_drawdown(last_friday: datetime):
+    """KODEX200의 최근 20거래일 고점 대비 드로다운을 반환.
+
+    - 반환: 드로다운 비율(예: -0.12) 또는 None(조회 실패/데이터 부족)
+    - None이면 이 가드는 판정 불가로 건너뜀 (VIX 가드는 별도로 계속 동작)
+    - 기준일은 시그널과 동일하게 last_friday 종가까지만 사용
+    """
+    try:
+        df = yf.download(DD_GUARD_TICKER, start=last_friday - timedelta(days=60),
+                         end=datetime.today())
+        if df.empty:
+            print("⚠️ 드로다운 가드: KODEX200 데이터 없음 → 가드 건너뜀")
+            return None
+        closes = df["Close"] if "Close" in df.columns else df.iloc[:, 0]
+        if hasattr(closes.index, "tz") and closes.index.tz is not None:
+            closes.index = closes.index.tz_localize(None)
+        closes = closes[closes.index <= pd.Timestamp(last_friday)].dropna()
+        if len(closes) < DD_GUARD_LOOKBACK:
+            print(f"⚠️ 드로다운 가드: 데이터 {len(closes)}일 < {DD_GUARD_LOOKBACK}일 → 가드 건너뜀")
+            return None
+        dd = float(closes.iloc[-1] / closes.tail(DD_GUARD_LOOKBACK).max() - 1)
+        return round(dd, 4)
+    except Exception as e:
+        print(f"⚠️ 드로다운 가드 조회 실패 ({e}) → 가드 건너뜀 (VIX 가드는 유지)")
+        return None
+
+
+# ============================================================
 # 7. Lambda 핸들러
 # ============================================================
 
@@ -490,6 +530,23 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"⚠️ 직전 시그널 carry-over 실패 ({e}) → UNKNOWN 유지 (Lambda B 안전 스킵)")
 
+    # [fix19] 국내 드로다운 가드 — VIX와 OR 결합 (하나라도 BEAR면 BEAR)
+    # VIX는 미국 지수라 국내 단독 폭락에 무반응(2026-07 실사고) → KODEX200 직접 감시
+    domestic_dd = fetch_domestic_drawdown(last_friday)
+    bear_reason = "VIX" if market_status == "BEAR" else None
+    if domestic_dd is not None:
+        print(f"📉 KODEX200 20일 고점 대비: {domestic_dd*100:+.2f}% "
+              f"(BEAR 임계 {DD_GUARD_THRESHOLD*100:.0f}%)")
+        if domestic_dd <= DD_GUARD_THRESHOLD:
+            if market_status == "BEAR":
+                bear_reason = "VIX+DD_GUARD"
+            else:
+                # BULL뿐 아니라 UNKNOWN(VIX 판별불가)이어도 국내 폭락이 명확하면 BEAR
+                market_status = "BEAR"
+                bear_reason   = "DD_GUARD"
+                print(f"🚨 국내 드로다운 가드 발동 → BEAR "
+                      f"(재진입: {DD_GUARD_THRESHOLD*100:.0f}% 위로 회복 시 자동 BULL)")
+
     # [fix16] 순위 히스테리시스용 확장 후보풀 (1~15위, rank 필드 포함)
     candidates_with_rank = [
         {**s, "rank": i} for i, s in enumerate(candidate_stocks, 1)
@@ -501,6 +558,8 @@ def lambda_handler(event, context):
         "market_status":    market_status,
         "vix":              vix,
         "vix_carried_over": vix_carried_over,
+        "domestic_dd":      domestic_dd,           # [fix19] KODEX200 20일 고점 대비 드로다운
+        "bear_reason":      bear_reason,           # [fix19] BEAR 사유 (VIX / DD_GUARD / VIX+DD_GUARD)
         "top_10_stocks":    top_stocks,           # 기존 필드 유지 (하위호환)
         "candidates":       candidates_with_rank,  # [fix16] 1~15위 전체, rank 포함
     }
