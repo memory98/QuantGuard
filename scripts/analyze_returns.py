@@ -34,7 +34,7 @@ class SignalArchive:
 
     def __init__(self, archive_dir: Path = ARCHIVE_DIR, exclude_dates: set = None):
         self.archive_dir = archive_dir
-        # [분석포함여부] Notion '주간 운영 일지'에서 N으로 표시된 날짜(YYYY-MM-DD).
+        # [분석포함여부] Notion '주간 운영 일지'의 분석포함여부(select) = '제외'인 날짜(YYYY-MM-DD).
         # force_test_mode=False여도 데이터 오염이 확인된 실행(예: 잔고 폴백 버그)을
         # 사람이 수동으로 제외하기 위한 필터 — 자동 판별 불가능한 케이스 대응.
         self.exclude_dates = exclude_dates or set()
