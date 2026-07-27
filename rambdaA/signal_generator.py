@@ -1,7 +1,7 @@
 """
 signal_generator.py — Lambda A: 시그널 생성기
 ========================================================
-버전: v1.0.20260716.1
+버전: v1.0.20260728.1
 실행: 매주 월요일 15:05 KST
 EventBridge: 타임존 Asia/Seoul / Cron: 5 15 ? * MON *
 Lambda 설정: Timeout 12분 / Memory 512MB
@@ -24,6 +24,10 @@ Lambda 설정: Timeout 12분 / Memory 512MB
         - iloc[-LOOKBACK] → base_date 이후 첫 거래일 종가로 변경
         - 신규 상장 ETF 방어: base 기준일 근방 데이터 없으면 제외
         - yf.py range=1y → range=2y 변경으로 데이터 충분히 확보
+  fix21: 유니버스 스냅샷 저장 추가 (섀도우 전략 백테스트/전진검증 인프라)
+        - 채점된 유니버스 전체를 universe/YYYY-MM-DD.json 으로 별도 저장
+        - top_10만으로는 대체 공식이 동일 입력을 재현할 수 없던 문제 해소
+        - 실전 매매 로직/시그널 파일(quant_signals)에는 영향 없음(추가 put 1건)
 """
 import json
 import os
@@ -618,6 +622,24 @@ def lambda_handler(event, context):
         archive_key  = f"quant_signals/{date_str}.json"
         s3.put_object(Bucket=S3_BUCKET_NAME, Key=archive_key, Body=body)
         print(f"✅ S3 아카이브 완료: {archive_key}")
+
+        # ③ [fix21] 유니버스 스냅샷 — 섀도우 전략 백테스트/전진검증용
+        # top_10만 저장하면 대체 공식이 "그 주에 뭘 골랐을지"를 동일 입력으로
+        # 재현할 수 없다(탈락 종목의 모멘텀·가격 소실). 채점된 유니버스 전체를
+        # 시장 상태와 함께 별도 저장한다. 실전 매매 로직에는 영향 없음(추가 put 1건).
+        universe_data = {
+            "updated_at":    output_data["updated_at"],
+            "signal_date":   date_str,
+            "market_status": market_status,
+            "vix":           vix,
+            "domestic_dd":   domestic_dd,
+            "bear_reason":   bear_reason,
+            "universe":      all_scores,   # 채점된 유니버스 전체 (모멘텀 내림차순)
+        }
+        universe_key = f"universe/{date_str}.json"
+        s3.put_object(Bucket=S3_BUCKET_NAME, Key=universe_key,
+                      Body=json.dumps(universe_data, ensure_ascii=False, indent=2))
+        print(f"✅ S3 유니버스 스냅샷 완료: {universe_key} ({len(all_scores)}종목)")
 
         return {"statusCode": 200, "body": "Signal Uploaded"}
     except Exception as e:
