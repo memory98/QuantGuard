@@ -32,7 +32,11 @@ CASH_RESERVE = int(os.environ.get("CASH_RESERVE", "0"))
 # True  → 주문 API 전송만 차단(Mock), 나머지 전 공정 100% 정상 실행
 # False → 실전 모드, 실제 KIS API로 주문 전송
 # ⚠️ 배포 전 반드시 False로 변경할 것!
-FORCE_TEST_MODE = False
+# [2026-07-27] 재진입(BULL 매수) 경로 실계좌 검증을 위해 임시 True.
+#              검증 완료 즉시 False로 복원하고 재배포한다.
+#              ⚠️ 다음 정기 실행(2026-08-03 월) 전까지 반드시 복원할 것 —
+#                 True로 남으면 그날 리밸런싱이 Mock으로 처리되어 실제 매매가 누락된다.
+FORCE_TEST_MODE = True
 
 # ── Lambda 스케줄 (EventBridge 설정 참고용) ──────────────────
 # [fix15] 권장 시각 변경: 15:15는 동시호가(15:20~15:30) 직전이라 연속거래가

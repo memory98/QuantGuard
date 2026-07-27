@@ -430,6 +430,18 @@ def lambda_handler(event, context):
             return {"statusCode": 200,
                     "body": json.dumps(korea_result, ensure_ascii=False)}
 
+        # [test hook 안전장치] force_bull 시그널을 실전 모드로 받으면 즉시 중단
+        if korea_result.get("result") == "FORCE_BULL_IN_LIVE_MODE_ABORT":
+            send_telegram(
+                "⛔ <b>[QuantGuard] 검증용 시그널 차단</b>\n"
+                "Lambda A가 force_bull(마켓 가드 우회) 시그널을 올렸는데 "
+                "Lambda B가 실전 모드(FORCE_TEST_MODE=False)입니다.\n"
+                "실제 주문을 막기 위해 리밸런싱을 중단했습니다.\n"
+                "검증 목적이면 FORCE_TEST_MODE=True로 배포 후 다시 실행하세요."
+            )
+            return {"statusCode": 200,
+                    "body": json.dumps(korea_result, ensure_ascii=False)}
+
         if korea_result.get("result") in (
             "S3_SIGNAL_ERROR", "NO_TARGETS", "STALE_SIGNAL_ABORT", "MARKET_CLOSED"
         ):

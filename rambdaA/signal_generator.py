@@ -572,6 +572,20 @@ def lambda_handler(event, context):
                 print(f"🚨 국내 드로다운 가드 발동 → BEAR "
                       f"(재진입: {DD_GUARD_THRESHOLD*100:.0f}% 위로 회복 시 자동 BULL)")
 
+    # [test hook] 재진입(BULL) 경로 검증용 스위치 — 이벤트에 명시할 때만 동작한다.
+    #   {"force_run": true, "force_bull": true}
+    # BEAR 대피 중에는 매수 경로가 실행되지 않아 재진입 로직을 검증할 수 없다.
+    # 임계 상수(DD_GUARD_THRESHOLD)를 임시로 고치는 방식은 원복을 누락하면
+    # 하락장 방어가 통째로 사라지므로, 기본 동작을 건드리지 않는 이벤트 인자로 구현했다.
+    # EventBridge 자동 실행은 빈 이벤트({})라 이 분기에 절대 진입하지 않는다.
+    force_bull = bool(event.get("force_bull"))
+    if force_bull:
+        print(f"🧪 force_bull 이벤트 감지 → 마켓 가드 우회 "
+              f"(실제 판정: {market_status}, 사유: {bear_reason}) → BULL로 강제")
+        print("   ⚠️ 검증 전용입니다. Lambda B가 FORCE_TEST_MODE=True인지 반드시 확인하세요.")
+        market_status = "BULL"
+        bear_reason   = None
+
     # [fix16] 순위 히스테리시스용 확장 후보풀 (1~15위, rank 필드 포함)
     candidates_with_rank = [
         {**s, "rank": i} for i, s in enumerate(candidate_stocks, 1)
@@ -585,6 +599,8 @@ def lambda_handler(event, context):
         "vix_carried_over": vix_carried_over,
         "domestic_dd":      domestic_dd,           # [fix19] KODEX200 20일 고점 대비 드로다운
         "bear_reason":      bear_reason,           # [fix19] BEAR 사유 (VIX / DD_GUARD / VIX+DD_GUARD)
+        "force_bull":       force_bull,            # [test hook] 가드 우회 검증 실행이면 True
+
         "top_10_stocks":    top_stocks,           # 기존 필드 유지 (하위호환)
         "candidates":       candidates_with_rank,  # [fix16] 1~15위 전체, rank 포함
     }

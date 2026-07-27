@@ -398,6 +398,17 @@ def run_korea_rebalancing(token: str, fallback_total_equity: int = 0) -> dict:
     market_status = signal_data.get("market_status", "BULL")
     target_stocks = signal_data.get("top_10_stocks", [])
 
+    # [test hook 안전장치] Lambda A의 force_bull(가드 우회) 시그널은 검증 전용이다.
+    # 실전 모드에서 이 시그널을 그대로 집행하면, 실제로는 BEAR인 하락장에
+    # 전 자산으로 10종목을 매수하는 최악의 조합이 된다.
+    # → force_bull 시그널 + 실전 모드는 조합 자체를 차단한다 (조용한 실패 금지: 명시적 abort)
+    if signal_data.get("force_bull") and not FORCE_TEST_MODE:
+        print("⛔ force_bull(검증용 가드 우회) 시그널인데 FORCE_TEST_MODE=False입니다.")
+        print("   실전 주문이 나가는 것을 막기 위해 리밸런싱을 중단합니다.")
+        print("   → 검증하려면 Lambda B를 FORCE_TEST_MODE=True로 배포한 뒤 다시 실행하세요.")
+        return {"result": "FORCE_BULL_IN_LIVE_MODE_ABORT",
+                "sell_orders": [], "buy_orders": []}
+
     # [fix16] 순위 히스테리시스: candidates(1~15위) → code:rank 매핑
     # 구버전 시그널(candidates 없음) 폴백: top_10_stocks만으로 1~10위 매핑
     # (11~15위 정보 없음 → 사실상 비활성, 기존 동작과 동일)
