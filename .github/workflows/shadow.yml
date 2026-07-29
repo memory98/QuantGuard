@@ -33,11 +33,13 @@ jobs:
         run: pip install pandas boto3 urllib3
 
       - name: S3 스냅샷 sync (읽기 전용)
+        # 오류 숨김 없음 — 키가 틀리면 이 단계가 명확히 실패한다(검증 목적).
+        # 빈 prefix(예: universe/ 8/3 이전)는 정상 종료(0건 복사)이므로 실패 아님.
         run: |
           mkdir -p data/s3_archive/universe data/s3_archive/quant_signals data/s3_archive/latest_signal
-          aws s3 sync s3://eunsung-quant-guard-bucket/universe/      data/s3_archive/universe/      || true
-          aws s3 sync s3://eunsung-quant-guard-bucket/quant_signals/ data/s3_archive/quant_signals/ || true
-          aws s3 sync s3://eunsung-quant-guard-bucket/latest_signal/ data/s3_archive/latest_signal/ || true
+          aws s3 sync s3://eunsung-quant-guard-bucket/universe/      data/s3_archive/universe/
+          aws s3 sync s3://eunsung-quant-guard-bucket/quant_signals/ data/s3_archive/quant_signals/
+          aws s3 sync s3://eunsung-quant-guard-bucket/latest_signal/ data/s3_archive/latest_signal/
 
       - name: 섀도우 파이프라인 실행
         run: |
