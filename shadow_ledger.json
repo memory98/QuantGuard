@@ -1,0 +1,50 @@
+{
+  "generated_at": "2026-07-29 12:29:42",
+  "source": "quant_signals(폴백 top_10)",
+  "intervals": [
+    {
+      "from": "2026-06-30",
+      "to": "2026-07-09",
+      "baseline(DD가드)": -16.73,
+      "concentrated(DD가드)": -19.42,
+      "baseline+콤보가드": -16.73,
+      "benchmark": -15.07,
+      "account": -6.25
+    },
+    {
+      "from": "2026-07-09",
+      "to": "2026-07-14",
+      "baseline(DD가드)": -0.2,
+      "concentrated(DD가드)": -0.2,
+      "baseline+콤보가드": -0.2,
+      "benchmark": -6.78,
+      "account": -13.01
+    },
+    {
+      "from": "2026-07-14",
+      "to": "2026-07-20",
+      "baseline(DD가드)": 0.0,
+      "concentrated(DD가드)": 0.0,
+      "baseline+콤보가드": 0.0,
+      "benchmark": -5.13,
+      "account": -4.81
+    },
+    {
+      "from": "2026-07-20",
+      "to": "2026-07-27",
+      "baseline(DD가드)": 0.0,
+      "concentrated(DD가드)": 0.0,
+      "baseline+콤보가드": 0.0,
+      "benchmark": 3.49,
+      "account": -0.15
+    }
+  ],
+  "cumulative": {
+    "baseline(DD가드)": -16.9,
+    "concentrated(DD가드)": -19.58,
+    "baseline+콤보가드": -16.9
+  },
+  "benchmark_pct": -22.26,
+  "account_pct": -22.49,
+  "note": "폴백(top_10) 구간은 백테스트 부트스트랩. 진짜 전진 OOS는 universe 스냅샷 누적(2026-08-03~)부터."
+}
