@@ -44,6 +44,12 @@ jobs:
           python backtest/shadow_forward.py | tee shadow_run_output.txt
           cp data/shadow_ledger.json shadow_ledger.json
 
+      - name: 텔레그램 성적표 요약 (시크릿 있으면 발송, 없으면 스킵)
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.QG_TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.QG_TELEGRAM_CHAT_ID }}
+        run: python scripts/notify_telegram_shadow.py
+
       - name: 원장 커밋
         run: |
           git config user.name "quantguard-shadow-bot"
