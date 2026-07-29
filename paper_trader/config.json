@@ -1,0 +1,17 @@
+{
+  "capital_krw": 10000000,
+  "high_window": 20,
+  "ma_window": 50,
+  "trail": 0.10,
+  "stop": 0.05,
+  "max_pos": 5,
+  "cost": 0.0005,
+  "grace_min": 30,
+  "poll_sec": 180,
+  "watchlist": [
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "AMD", "NFLX",
+    "ADBE", "CRM", "QCOM", "TXN", "INTC", "JPM", "V", "MA", "UNH", "JNJ",
+    "XOM", "CVX", "WMT", "PG", "HD", "COST", "LLY", "ABBV", "KO", "PEP",
+    "CAT", "BA", "GE", "DIS", "NKE"
+  ]
+}
