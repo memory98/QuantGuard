@@ -1,0 +1,53 @@
+name: Shadow Forward Validation
+
+# 섀도우 전진검증 파이프라인 주간 자동 실행 (맥북 무관, GitHub 클라우드에서 실행)
+# 매주 월 07:00 UTC = 16:00 KST — Lambda A(15:05)/B(15:15) 이후.
+# S3 스냅샷을 읽어 shadow_forward.py 실행 → 원장(shadow_ledger.json)을 저장소에 커밋.
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch: {}     # 수동 실행(테스트)도 가능
+
+permissions:
+  contents: write            # 원장 커밋용
+
+concurrency:
+  group: shadow-forward
+  cancel-in-progress: false
+
+jobs:
+  shadow:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.QG_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.QG_AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'ap-northeast-2' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 의존성 설치
+        run: pip install pandas boto3 urllib3
+
+      - name: S3 스냅샷 sync (읽기 전용)
+        run: |
+          mkdir -p data/s3_archive/universe data/s3_archive/quant_signals data/s3_archive/latest_signal
+          aws s3 sync s3://eunsung-quant-guard-bucket/universe/      data/s3_archive/universe/      || true
+          aws s3 sync s3://eunsung-quant-guard-bucket/quant_signals/ data/s3_archive/quant_signals/ || true
+          aws s3 sync s3://eunsung-quant-guard-bucket/latest_signal/ data/s3_archive/latest_signal/ || true
+
+      - name: 섀도우 파이프라인 실행
+        run: |
+          python backtest/shadow_forward.py | tee shadow_run_output.txt
+          cp data/shadow_ledger.json shadow_ledger.json
+
+      - name: 원장 커밋
+        run: |
+          git config user.name "quantguard-shadow-bot"
+          git config user.email "actions@github.com"
+          git add shadow_ledger.json
+          git diff --cached --quiet || git commit -m "chore: 주간 섀도우 원장 갱신 [skip ci]"
+          git push
