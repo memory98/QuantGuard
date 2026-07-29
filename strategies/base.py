@@ -23,6 +23,11 @@ class Strategy(ABC):
 
     name: str = "base"
     description: str = ""
+    # 백테스트가 이 전략에 유니버스를 어떻게 만들어 줄지 선언한다.
+    #   lookback: 모멘텀 계산 기간(영업일). 백테스트가 이 값으로 momentum을 채점한다.
+    #   universe_tag: 어느 유니버스에서 고를지 ("normal"=국내 일반 ETF, "leverage"=2X ETF)
+    lookback: int = 126
+    universe_tag: str = "normal"
 
     @abstractmethod
     def select(self, universe: list[dict], market: dict) -> list[dict]:
