@@ -46,6 +46,8 @@ from baseline import BaselineMomentum126      # noqa: E402
 from aggressive import ConcentratedMomentum   # noqa: E402
 from fast import FastMomentum63               # noqa: E402
 from leverage import LeverageMomentum2X       # noqa: E402
+from vol_adjusted import VolAdjustedMomentum   # noqa: E402
+from vol_tilted import VolTiltedConcentrated    # noqa: E402
 
 # 레버리지 유니버스 구성용 키워드
 _LEV_INCLUDE = ["레버리지", "2X"]
@@ -143,6 +145,18 @@ class PriceMatrix:
         s = self.asof(self.closes[code], date) if code in self.closes.columns else None
         return float(s.iloc[-1]) if s is not None else None
 
+    def volatility(self, code, date, window: int = 63):
+        """date까지 최근 window 거래일 일간수익률 표준편차(변동성조정 전략용)."""
+        if code not in self.closes.columns:
+            return None
+        s = self.closes[code]
+        s = s[s.index <= date].dropna()
+        if len(s) < window + 1:
+            return None
+        rets = s.pct_change().dropna().tail(window)
+        v = float(rets.std())
+        return v if v > 0 else None
+
 
 class GuardSimulator:
     """각 시점의 실제 VIX/KODEX200 시세로 market_status(BULL/BEAR) 재계산.
@@ -213,7 +227,8 @@ class LongBacktest:
             price, mom = m
             name = nm.get(code, code)
             out.append({"code": code, "name": name, "price": price,
-                        "momentum": mom, "sector": classify_sector(name)})
+                        "momentum": mom, "sector": classify_sector(name),
+                        "vol": self.p.volatility(code, date, 63)})
         self._cache[key] = out
         return out
 
@@ -341,7 +356,8 @@ def main():
         return
 
     strategies = [BaselineMomentum126(), ConcentratedMomentum(),
-                  FastMomentum63(), LeverageMomentum2X()]
+                  FastMomentum63(), LeverageMomentum2X(),
+                  VolAdjustedMomentum(), VolTiltedConcentrated()]
     bt = LongBacktest(universes, prices, GuardSimulator(prices), strategies, args.cost_per_side)
     res = bt.run()
 

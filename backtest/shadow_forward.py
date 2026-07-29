@@ -38,6 +38,7 @@ import pandas as pd  # noqa: E402
 import yf            # noqa: E402
 from baseline import BaselineMomentum126      # noqa: E402
 from aggressive import ConcentratedMomentum   # noqa: E402
+from vol_tilted import VolTiltedConcentrated   # noqa: E402
 from signal_generator import (                # noqa: E402
     DD_GUARD_TICKER, DD_GUARD_LOOKBACK, DD_GUARD_THRESHOLD)
 
@@ -98,6 +99,17 @@ class PriceProvider:
             return None
         sub = s[s.index <= pd.Timestamp(date)].dropna()
         return float(sub.iloc[-1]) if len(sub) else None
+
+    def volatility(self, code, date, window=63):
+        """변동성조정 전략용: date까지 최근 window 거래일 일간수익률 표준편차."""
+        s = self._s.get(code)
+        if s is None:
+            return None
+        sub = s[s.index <= pd.Timestamp(date)].dropna()
+        if len(sub) < window + 1:
+            return None
+        v = float(sub.pct_change().dropna().tail(window).std())
+        return v if v > 0 else None
 
     def kodex(self):
         return self._s.get(DD_GUARD_TICKER)
@@ -180,6 +192,7 @@ def main():
     specs = [
         ("baseline(DD가드)", BaselineMomentum126(), False),
         ("concentrated(DD가드)", ConcentratedMomentum(), False),
+        ("voltilt(DD가드)", VolTiltedConcentrated(), False),   # 재설계 공격형(리스크조정 선별+집중)
         ("baseline+콤보가드", BaselineMomentum126(), True),
     ]
     ledgers = {name: {"cum": 1.0, "prev": {}, "intervals": []} for name, _, _ in specs}
@@ -191,10 +204,12 @@ def main():
         a, b = points[i], points[i + 1]
         d0, d1 = a["date"], b["date"]
         row = {"from": d0.strftime("%Y-%m-%d"), "to": d1.strftime("%Y-%m-%d")}
+        # 변동성조정 전략용: 유니버스에 vol 필드 주입(다른 전략은 무시)
+        uni = [{**s, "vol": prices.volatility(s["code"], d0)} for s in a["universe"]]
 
         for name, strat, use_sma in specs:
             market = recompute_market(prices, d0, use_sma)
-            net, cash, drift = portfolio_return(strat, a["universe"], market, prices,
+            net, cash, drift = portfolio_return(strat, uni, market, prices,
                                                 d0, d1, ledgers[name]["prev"])
             ledgers[name]["cum"] *= (1 + net)
             ledgers[name]["prev"] = drift
