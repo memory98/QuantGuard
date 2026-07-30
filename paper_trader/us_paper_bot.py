@@ -306,12 +306,15 @@ class Bot:
             positions.append({
                 "sym": s, "entry": round(p["entry"], 2), "current": round(cur, 2),
                 "ret_pct": round((cur / p["entry"] - 1) * 100, 2),
+                "value_usd": round(p["shares"] * cur, 2),
                 "value_krw": round(p["shares"] * cur * fx0),
             })
         LIVE.parent.mkdir(parents=True, exist_ok=True)
         LIVE.write_text(json.dumps({
             "running": running, "market_open": market_open(),
             "updated": f"{datetime.now(KST):%Y-%m-%d %H:%M:%S}",
+            "equity_usd": round(eq_usd, 2), "cash_usd": round(self.pf.cash, 2),
+            "capital_usd": round(self.pf.capital_krw / fx0, 2),
             "equity_krw": round(eq_usd * fx0), "cash_krw": round(self.pf.cash * fx0),
             "capital_krw": self.pf.capital_krw, "universe_n": len(self.universe),
             "cum_return_pct": round((eq_usd * fx0 / self.pf.capital_krw - 1) * 100, 2),
