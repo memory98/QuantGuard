@@ -163,26 +163,35 @@ class Portfolio:
         return self.cash + sum(p["shares"] * price.get(s, p["entry"]) for s, p in self.pos.items())
 
     def buy(self, sym, px, budget_usd):
-        shares = (budget_usd * (1 - self.cfg["cost"])) / px
-        self.cash -= budget_usd
-        self.pos[sym] = {"entry": px, "peak": px, "shares": shares,
+        slip = self.cfg.get("slippage", 0.0)
+        fill = px * (1 + slip)                    # 슬리피지: 살 때 불리하게
+        shares = budget_usd / (fill * (1 + self.cfg["cost"]))
+        if self.cfg.get("whole_shares"):
+            shares = int(shares)                  # 정수주(한국 브로커 현실)
+        if shares < 1:
+            return
+        spent = shares * fill
+        self.cash -= spent + spent * self.cfg["cost"]
+        self.pos[sym] = {"entry": round(fill, 4), "peak": px, "shares": shares,
                          "entry_at": f"{datetime.now(KST):%Y-%m-%d %H:%M}"}
-        log(f"🟢 매수(종이) {sym} @ ${px:.2f}  예산 ${budget_usd:,.0f}")
+        log(f"🟢 매수(종이) {sym} {shares}주 @ ${fill:.2f} (슬리피지반영)")
         self.save()
 
     def sell(self, sym, px, reason, fx):
         p = self.pos.pop(sym)
-        proceeds = p["shares"] * px * (1 - self.cfg["cost"])
-        self.cash += proceeds
-        ret = px / p["entry"] - 1
-        pnl_krw = (px - p["entry"]) * p["shares"] * fx
+        slip = self.cfg.get("slippage", 0.0)
+        fill = px * (1 - slip)                    # 슬리피지: 팔 때 불리하게
+        gross = p["shares"] * fill
+        self.cash += gross - gross * self.cfg["cost"]
+        ret = fill / p["entry"] - 1
+        pnl_krw = (fill - p["entry"]) * p["shares"] * fx
         append_jsonl(TRADES, {
             "closed_at": f"{datetime.now(KST):%Y-%m-%d %H:%M}", "sym": sym,
-            "entry_px": round(p["entry"], 2), "exit_px": round(px, 2),
+            "shares": p["shares"], "entry_px": round(p["entry"], 2), "exit_px": round(fill, 2),
             "ret_pct": round(ret * 100, 2), "reason": reason,
             "entry_at": p["entry_at"], "pnl_krw": round(pnl_krw),
         })
-        log(f"🔴 매도(종이) {sym} @ ${px:.2f}  수익 {ret*100:+.1f}%  ({reason})")
+        log(f"🔴 매도(종이) {sym} {p['shares']}주 @ ${fill:.2f}  수익 {ret*100:+.1f}%  ({reason})")
         self.save()
 
 
