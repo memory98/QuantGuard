@@ -28,7 +28,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import signal
+import subprocess
 import sys
 import time
 import urllib.request
@@ -338,6 +340,11 @@ class Bot:
 
     def run(self):
         signal.signal(signal.SIGINT, lambda *_: setattr(self, "stop", True))
+        # 봇이 스스로 절전 방지(화면보호기에도 순찰 유지). 봇 종료 시 caffeinate 자동 해제.
+        try:
+            subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
+        except Exception:
+            pass
         poll = self.cfg["poll_sec"]
         log(f"▶ 종이 봇 시작 | 자본 {self.pf.capital_krw:,}원 | poll {poll}s")
         log("   종료: Ctrl-C (수동) / 안 꺼도 미국장 마감(약 05:00 KST) 자동정리")
