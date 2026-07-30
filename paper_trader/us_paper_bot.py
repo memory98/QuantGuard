@@ -31,6 +31,7 @@ import json
 import signal
 import sys
 import time
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -44,6 +45,7 @@ STATE = ROOT / "data" / "paper_us_state.json"
 TRADES = ROOT / "data" / "paper_us_trades.jsonl"
 DAILY = ROOT / "data" / "paper_us_daily.jsonl"
 LIVE = ROOT / "data" / "paper_us_live.json"   # 웹 대시보드용 실시간 스냅샷
+UNIV = ROOT / "data" / "paper_us_universe.json"  # 당일 스크리닝된 유니버스(캐시)
 LOG = ROOT / "log" / "paper_us.log"
 ET = ZoneInfo("America/New_York")
 KST = ZoneInfo("Asia/Seoul")
@@ -73,6 +75,52 @@ def get_fx():
         return float(fetch("KRW=X", "5d").iloc[-1])
     except Exception:
         return 1350.0
+
+
+def avg_dollar_volume(sym, days=20):
+    """최근 days 거래일 평균 거래대금($) = 종가×거래량. 스크리닝용."""
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1mo&interval=1d"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    raw = json.loads(urllib.request.urlopen(req, timeout=15).read().decode("utf-8"))
+    q = raw["chart"]["result"][0]["indicators"]["quote"][0]
+    pairs = [(c, v) for c, v in zip(q["close"], q["volume"]) if c and v][-days:]
+    return sum(c * v for c, v in pairs) / len(pairs) if pairs else 0.0
+
+
+def screen_universe(pool, size):
+    """후보풀 → 거래대금 상위 size개."""
+    scored = []
+    for s in pool:
+        try:
+            dv = avg_dollar_volume(s)
+            if dv > 0:
+                scored.append((s, dv))
+        except Exception:
+            continue
+    scored.sort(key=lambda x: -x[1])
+    return [s for s, _ in scored[:size]]
+
+
+def get_universe(cfg):
+    """당일 스크리닝 유니버스(캐시). 하루 1회만 스크리닝하고 재사용."""
+    today = f"{datetime.now(KST):%Y-%m-%d}"
+    if UNIV.exists():
+        try:
+            d = json.loads(UNIV.read_text(encoding="utf-8"))
+            if d.get("date") == today and d.get("universe"):
+                return d["universe"]
+        except Exception:
+            pass
+    log(f"🔎 유니버스 스크리닝: 후보 {len(cfg['candidate_pool'])}개 → 거래대금 상위 {cfg['universe_size']}")
+    uni = screen_universe(cfg["candidate_pool"], cfg["universe_size"])
+    if not uni:
+        uni = cfg["candidate_pool"][:cfg["universe_size"]]  # 스크리닝 실패 폴백
+    UNIV.parent.mkdir(parents=True, exist_ok=True)
+    UNIV.write_text(json.dumps({"date": today, "universe": uni,
+        "screened_at": f"{datetime.now(KST):%Y-%m-%d %H:%M}"},
+        ensure_ascii=False, indent=2), encoding="utf-8")
+    log(f"   → {len(uni)}종목 선정: {', '.join(uni[:12])}…")
+    return uni
 
 
 def market_open(dt=None):
@@ -158,15 +206,23 @@ class Bot:
         self.feed = feed
         self.stop = False
         self.day_start_krw = None
+        self.universe = get_universe(cfg)   # 당일 거래대금 상위 스크리닝
 
     def _breakout(self, ser):
         c = float(ser.iloc[-1])
         return c >= float(ser.tail(self.cfg["high_window"]).max()) and \
             c > float(ser.tail(self.cfg["ma_window"]).mean())
 
+    def _strength(self, ser):
+        """신호 강도 = 최근 ~1개월(21거래일) 모멘텀. 강할수록 우선 매수."""
+        if len(ser) > 21:
+            return float(ser.iloc[-1] / ser.iloc[-21] - 1)
+        return float(ser.iloc[-1] / ser.tail(self.cfg["ma_window"]).mean() - 1)
+
     def cycle(self, fx, allow_entry=True):
-        data = self.feed.snapshot(self.cfg["watchlist"], self.cfg["ma_window"])
+        data = self.feed.snapshot(self.universe, self.cfg["ma_window"])
         price = {s: float(ser.iloc[-1]) for s, ser in data.items()}
+        # 청산(손절/트레일)
         for sym in list(self.pf.pos.keys()):
             if sym not in price:
                 continue
@@ -177,14 +233,15 @@ class Bot:
                 self.pf.sell(sym, c, f"손절 -{int(self.cfg['stop']*100)}%", fx)
             elif c <= p["peak"] * (1 - self.cfg["trail"]):
                 self.pf.sell(sym, c, f"트레일 -{int(self.cfg['trail']*100)}%", fx)
+        # 진입: 돌파 후보를 신호강도 순으로 정렬해 빈 슬롯만큼 상위 매수
         if allow_entry:
-            eq = self.pf.equity_usd(price)
-            for sym in self.cfg["watchlist"]:
-                if len(self.pf.pos) >= self.cfg["max_pos"]:
-                    break
-                if sym in self.pf.pos or sym not in data:
-                    continue
-                if self._breakout(data[sym]):
+            slots = self.cfg["max_pos"] - len(self.pf.pos)
+            if slots > 0:
+                cands = [(s, self._strength(data[s])) for s in self.universe
+                         if s not in self.pf.pos and s in data and self._breakout(data[s])]
+                cands.sort(key=lambda x: -x[1])
+                eq = self.pf.equity_usd(price)
+                for sym, _ in cands[:slots]:
                     budget = min(eq / self.cfg["max_pos"], self.pf.cash)
                     if budget > 1:
                         self.pf.buy(sym, price[sym], budget)

@@ -8,10 +8,16 @@
   "cost": 0.0005,
   "grace_min": 30,
   "poll_sec": 180,
-  "watchlist": [
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "AMD", "NFLX",
-    "ADBE", "CRM", "QCOM", "TXN", "INTC", "JPM", "V", "MA", "UNH", "JNJ",
-    "XOM", "CVX", "WMT", "PG", "HD", "COST", "LLY", "ABBV", "KO", "PEP",
-    "CAT", "BA", "GE", "DIS", "NKE"
+  "universe_size": 40,
+  "candidate_pool": [
+    "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "AMZN", "META", "TSLA", "AVGO", "AMD",
+    "NFLX", "ADBE", "CRM", "ORCL", "QCOM", "TXN", "INTC", "CSCO", "IBM", "NOW",
+    "INTU", "AMAT", "MU", "LRCX", "KLAC", "PANW", "SNPS", "CDNS", "MRVL", "SMCI",
+    "WMT", "PG", "KO", "PEP", "COST", "HD", "MCD", "NKE", "SBUX", "TGT",
+    "LOW", "DIS", "CMCSA", "UNH", "JNJ", "LLY", "ABBV", "MRK", "PFE", "TMO",
+    "ABT", "DHR", "BMY", "AMGN", "GILD", "CVS", "JPM", "BAC", "WFC", "GS",
+    "MS", "V", "MA", "AXP", "C", "SCHW", "BLK", "SPGI", "XOM", "CVX",
+    "COP", "CAT", "BA", "GE", "HON", "UPS", "RTX", "LMT", "DE", "UNP",
+    "BRK-B", "PYPL", "UBER", "ABNB", "PLTR", "COIN", "SHOP", "MSTR"
   ]
 }
