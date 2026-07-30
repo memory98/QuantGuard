@@ -277,7 +277,7 @@ class Bot:
 
     def daily_summary(self, fx, reason):
         """하루 요약 1줄 기록(분석 핵심). vs SPY 포함."""
-        eq_krw = self.pf.equity_usd({}) * fx
+        eq_krw = self.pf.equity_usd({}) * self.pf.fx0
         try:
             spy = fetch("SPY", "5d")
             spy_day = round((float(spy.iloc[-1]) / float(spy.iloc[-2]) - 1) * 100, 2)
@@ -297,24 +297,25 @@ class Bot:
             f"SPY {spy_day if spy_day is not None else '?'}%)")
 
     def write_live(self, price, fx, running=True):
-        """웹 대시보드용 실시간 스냅샷 저장."""
+        """웹 대시보드용 실시간 스냅샷 저장. 평가액은 진입환율(fx0) 고정 = 순수 매매성과."""
         eq_usd = self.pf.equity_usd(price)
+        fx0 = self.pf.fx0
         positions = []
         for s, p in self.pf.pos.items():
             cur = price.get(s, p["entry"])
             positions.append({
                 "sym": s, "entry": round(p["entry"], 2), "current": round(cur, 2),
                 "ret_pct": round((cur / p["entry"] - 1) * 100, 2),
-                "value_krw": round(p["shares"] * cur * fx),
+                "value_krw": round(p["shares"] * cur * fx0),
             })
         LIVE.parent.mkdir(parents=True, exist_ok=True)
         LIVE.write_text(json.dumps({
             "running": running, "market_open": market_open(),
             "updated": f"{datetime.now(KST):%Y-%m-%d %H:%M:%S}",
-            "equity_krw": round(eq_usd * fx), "cash_krw": round(self.pf.cash * fx),
-            "capital_krw": self.pf.capital_krw,
-            "cum_return_pct": round((eq_usd * fx / self.pf.capital_krw - 1) * 100, 2),
-            "fx": round(fx, 1), "positions": positions,
+            "equity_krw": round(eq_usd * fx0), "cash_krw": round(self.pf.cash * fx0),
+            "capital_krw": self.pf.capital_krw, "universe_n": len(self.universe),
+            "cum_return_pct": round((eq_usd * fx0 / self.pf.capital_krw - 1) * 100, 2),
+            "fx": round(fx, 1), "fx0": round(fx0, 1), "positions": positions,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def run(self):
@@ -323,7 +324,7 @@ class Bot:
         log(f"▶ 종이 봇 시작 | 자본 {self.pf.capital_krw:,}원 | poll {poll}s")
         log("   종료: Ctrl-C (수동) / 안 꺼도 미국장 마감(약 05:00 KST) 자동정리")
         fx = get_fx()
-        self.day_start_krw = self.pf.equity_usd({}) * fx
+        self.day_start_krw = self.pf.equity_usd({}) * self.pf.fx0
         was_open = False
         while not self.stop:
             fx = get_fx()
@@ -331,10 +332,10 @@ class Bot:
             if is_open:
                 if not was_open:
                     log("🔔 미국장 개장 — 매매 시작")
-                    self.day_start_krw = self.pf.equity_usd({}) * fx
+                    self.day_start_krw = self.pf.equity_usd({}) * self.pf.fx0
                 price = self.cycle(fx, allow_entry=True)
                 self.write_live(price, fx, True)
-                log(f"… 순찰 | 보유 {len(self.pf.pos)} | 평가액 {self.pf.equity_usd(price)*fx:,.0f}원")
+                log(f"… 순찰 | 보유 {len(self.pf.pos)} | 평가액 {self.pf.equity_usd(price)*self.pf.fx0:,.0f}원")
             elif was_open:
                 # 방금 장마감 → 자동 정리 + 요약 + 종료
                 log("🔔 미국장 마감 — 자동 정리 시작")
@@ -370,7 +371,7 @@ def main():
         log(f"🔎 --once 점검 (장 {'열림' if market_open() else '닫힘'}, 환율 {fx:,.1f})")
         price = bot.cycle(fx, allow_entry=market_open())
         bot.write_live(price, fx, False)
-        log(f"보유 {list(pf.pos.keys()) or '없음'} | 평가액 {pf.equity_usd(price)*fx:,.0f}원")
+        log(f"보유 {list(pf.pos.keys()) or '없음'} | 평가액 {pf.equity_usd(price)*pf.fx0:,.0f}원")
     else:
         bot.run()
 
