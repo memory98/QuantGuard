@@ -16,13 +16,14 @@
 - 웹은 데이터 파일을 읽어 상태 표시(봇과 파일로 느슨히 결합 → 단순·안전).
 - 실계좌/실주문 연결 절대 없음(종이 유지).
 
-## 다음 할 일 (순서대로, 하나씩)
-- [ ] **STEP 1. 봇 리팩터**: `us_paper_bot.py`의 `Bot.run()`을 스레드에서 시작/중지 가능하게(중지 플래그·start()/stop() 메서드). CLI 실행은 그대로 유지.
-- [ ] **STEP 2. Flask 서버 골격**: `paper_trader/web/app.py` — 라우트 `/`(대시보드), `/api/status`(JSON), `/api/start`, `/api/stop`. `dashboard/.venv`로 실행.
-- [ ] **STEP 3. 상태 API**: state.json+trades.jsonl+daily.jsonl 읽어 {실행중여부, 평가액(원), 현금, 보유종목, 최근거래, 당일·누적수익, vsSPY} 반환.
-- [ ] **STEP 4. 대시보드 HTML**: 실행상태·평가액·보유·최근거래·일별 P&L 표시, 수초마다 자동새로고침. Start/Stop 버튼(→ /api).
-- [ ] **STEP 5. 설정 편집(선택)**: 웹에서 trail/stop/max_pos 등 config.json 수정("개선" 워크플로우 웹化).
-- [ ] **STEP 6. 실행 안내**: 서버 켜는 법 + 브라우저 localhost:PORT 접속. 봇 시작/종료를 버튼으로.
+## 진행 상황 (2026-07-30 대부분 완료)
+설계 변경: 봇 스레드화 대신 **서브프로세스 제어**(웹이 봇을 Popen 실행, SIGINT로 안전종료) — 봇 CLI 그대로, 크로스폴더 OK. 웹앱은 별도 폴더 `../quant-web/app.py`(stock 옆).
+- [x] **STEP 1. 봇 훅**: `us_paper_bot.py`에 `write_live()` 추가 → `data/paper_us_live.json`(현재 평가액·보유·수익). 스레드화 불필요(서브프로세스).
+- [x] **STEP 2. Flask 서버**: `quant-web/app.py` — `/`, `/api/status`, `/api/start`, `/api/stop`(?force=1 강제). 127.0.0.1:8787.
+- [x] **STEP 3. 상태 API**: live.json + trades.jsonl + daily.jsonl + 로그tail 반환. 검증 완료(start→alive→stop→정지).
+- [x] **STEP 4. 대시보드 HTML**: 실행뱃지·평가액·누적%·현금·환율·보유표·최근거래·일별(vsSPY)·로그, 5초 자동새로고침, 시작/안전종료/강제 버튼.
+- [ ] **STEP 5. 설정 편집(선택, 미완)**: 웹에서 config.json(trail/stop/max_pos 등) 수정 UI. ← **다음 이어할 지점**
+- [x] **STEP 6. 실행 안내**: `stock/dashboard/.venv/bin/python quant-web/app.py` → http://127.0.0.1:8787
 
 ## 주의/원칙
 - 백테스트 숫자 짜맞추기(과최적화) 금지 — 개선도 OOS로 판정.
