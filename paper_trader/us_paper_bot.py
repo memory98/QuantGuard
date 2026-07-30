@@ -318,7 +318,7 @@ class Bot:
         for s, p in self.pf.pos.items():
             cur = price.get(s, p["entry"])
             positions.append({
-                "sym": s, "shares": p["shares"],
+                "sym": s, "shares": round(p["shares"], 3),
                 "entry": round(p["entry"], 2), "current": round(cur, 2),
                 "ret_pct": round((cur / p["entry"] - 1) * 100, 2),
                 "value_usd": round(p["shares"] * cur, 2),
