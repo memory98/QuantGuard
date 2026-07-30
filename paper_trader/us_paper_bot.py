@@ -32,6 +32,7 @@ import signal
 import sys
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -197,14 +198,18 @@ class Portfolio:
 
 class Feed:
     def snapshot(self, syms, ma_window):
-        out = {}
-        for s in syms:
+        """40종목을 병렬로 수집(순차→동시). 한 사이클 시간·throttling 위험 대폭 감소."""
+        def one(s):
             try:
                 ser = fetch(s, "3mo")
-                if len(ser) >= ma_window:
-                    out[s] = ser
+                return (s, ser) if len(ser) >= ma_window else None
             except Exception:
-                continue
+                return None
+        out = {}
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            for r in ex.map(one, syms):
+                if r:
+                    out[r[0]] = r[1]
         return out
 
 
