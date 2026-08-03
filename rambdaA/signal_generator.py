@@ -1,7 +1,7 @@
 """
 signal_generator.py — Lambda A: 시그널 생성기
 ========================================================
-버전: v1.0.20260728.1
+버전: v1.0.20260803.1
 실행: 매주 월요일 15:05 KST
 EventBridge: 타임존 Asia/Seoul / Cron: 5 15 ? * MON *
 Lambda 설정: Timeout 12분 / Memory 512MB
@@ -28,6 +28,12 @@ Lambda 설정: Timeout 12분 / Memory 512MB
         - 채점된 유니버스 전체를 universe/YYYY-MM-DD.json 으로 별도 저장
         - top_10만으로는 대체 공식이 동일 입력을 재현할 수 없던 문제 해소
         - 실전 매매 로직/시그널 파일(quant_signals)에는 영향 없음(추가 put 1건)
+  fix22: 안정성 개선 (데이터 신선도 가드 + 테스트 아카이브 격리)
+        - data_guard.validate_prices: DD가드용 KODEX200 시세가 낡거나 부족/비정상이면
+          가드 판정 안 함(야후 단일의존 실패로 잘못된 BULL/BEAR 내는 것 방지)
+        - s3_keys.archive_keys: force_bull(테스트) 실행은 *_test/ prefix로 격리
+          → 실날짜 아카이브(quant_signals/·universe/) 오염 방지(2026-07-24 사고 대응)
+        - 실행경로 단위테스트(tests/) + CI 배포 게이트 추가
 """
 import json
 import os
@@ -38,6 +44,8 @@ import pandas as pd
 import fdr
 import yf
 import urllib3
+from data_guard import validate_prices  # [fix22] 시세 신선도·정합성 검증
+from s3_keys import archive_keys         # [fix22] 테스트 실행 아카이브 격리
 from datetime import datetime, timedelta
 from config import (
     S3_BUCKET_NAME, QUANT_SIGNAL_KEY,
@@ -474,8 +482,14 @@ def fetch_domestic_drawdown(last_friday: datetime):
         if hasattr(closes.index, "tz") and closes.index.tz is not None:
             closes.index = closes.index.tz_localize(None)
         closes = closes[closes.index <= pd.Timestamp(last_friday)].dropna()
-        if len(closes) < DD_GUARD_LOOKBACK:
-            print(f"⚠️ 드로다운 가드: 데이터 {len(closes)}일 < {DD_GUARD_LOOKBACK}일 → 가드 건너뜀")
+        # [fix22] 신선도·정합성 검증: 낡거나 부족/비정상 데이터로 가드 판정 금지(야후 실패 방지)
+        ok, reason = validate_prices(
+            last_date=closes.index[-1].to_pydatetime() if len(closes) else None,
+            num_rows=len(closes),
+            last_value=float(closes.iloc[-1]) if len(closes) else None,
+            as_of=last_friday, min_rows=DD_GUARD_LOOKBACK, max_stale_days=5)
+        if not ok:
+            print(f"⚠️ 드로다운 가드: 데이터 검증 실패({reason}) → 가드 건너뜀")
             return None
         dd = float(closes.iloc[-1] / closes.tail(DD_GUARD_LOOKBACK).max() - 1)
         return round(dd, 4)
@@ -616,10 +630,9 @@ def lambda_handler(event, context):
         s3.put_object(Bucket=S3_BUCKET_NAME, Key=QUANT_SIGNAL_KEY, Body=body)
         print(f"\n✅ S3 업로드 완료: {QUANT_SIGNAL_KEY}")
 
-        # ② 날짜별 아카이브 (이력 보존)
-        # 경로: quant_signals/YYYY-MM-DD.json
-        date_str     = last_friday.strftime("%Y-%m-%d")
-        archive_key  = f"quant_signals/{date_str}.json"
+        # ② 날짜별 아카이브 (이력 보존) — [fix22] force_bull 테스트는 *_test/로 격리
+        date_str            = last_friday.strftime("%Y-%m-%d")
+        archive_key, universe_key = archive_keys(date_str, force_bull)
         s3.put_object(Bucket=S3_BUCKET_NAME, Key=archive_key, Body=body)
         print(f"✅ S3 아카이브 완료: {archive_key}")
 
@@ -636,7 +649,6 @@ def lambda_handler(event, context):
             "bear_reason":   bear_reason,
             "universe":      all_scores,   # 채점된 유니버스 전체 (모멘텀 내림차순)
         }
-        universe_key = f"universe/{date_str}.json"
         s3.put_object(Bucket=S3_BUCKET_NAME, Key=universe_key,
                       Body=json.dumps(universe_data, ensure_ascii=False, indent=2))
         print(f"✅ S3 유니버스 스냅샷 완료: {universe_key} ({len(all_scores)}종목)")
