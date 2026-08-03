@@ -19,7 +19,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "rambdaA"))
@@ -27,6 +27,7 @@ import yf  # 기존 커스텀 야후 파이낸스 모듈 재사용 (신규 의�
 
 BENCHMARK_TICKER = "069500"  # KODEX 200 — KOSPI200 추종 ETF, 벤치마크로 사용
 ARCHIVE_DIR = Path(__file__).resolve().parent.parent / "data" / "s3_archive" / "latest_signal"
+QUANT_DIR = Path(__file__).resolve().parent.parent / "data" / "s3_archive" / "quant_signals"
 
 
 class SignalArchive:
@@ -101,6 +102,45 @@ class ReturnAnalyzer:
         self.runs = runs
         self.benchmark = benchmark
         self.net_deposits = net_deposits or {}
+        self._pcache = {}
+
+    def _price_series(self, code):
+        if code not in self._pcache:
+            try:
+                df = yf.download(code, datetime(2026, 1, 1), datetime.today())
+                s = df["Close"] if "Close" in df.columns else df.iloc[:, 0]
+                if hasattr(s.index, "tz") and s.index.tz is not None:
+                    s.index = s.index.tz_localize(None)
+                self._pcache[code] = s.dropna()
+            except Exception:
+                self._pcache[code] = None
+        return self._pcache[code]
+
+    def _if_invested(self, entry_dt, exit_dt):
+        """엔트리 시점 시그널의 top10을 균등매수했다면의 수익률(가드가 없었을 때 반사실).
+
+        BEAR로 현금 대피한 주에 '샀으면 얼마였나'를 정량화 → 가드가 아낀(또는 놓친) 크기.
+        시그널 파일: 엔트리 실행일(월) 직전 금요일 기준 quant_signals/<금요일>.json 의 top_10_stocks.
+        """
+        import pandas as pd
+        lf = entry_dt - timedelta(days=(entry_dt.weekday() - 4) % 7)
+        f = QUANT_DIR / f"{lf:%Y-%m-%d}.json"
+        if not f.exists():
+            return None
+        try:
+            picks = json.loads(f.read_text(encoding="utf-8")).get("top_10_stocks", [])
+        except Exception:
+            return None
+        rets = []
+        for p in picks:
+            s = self._price_series(p["code"])
+            if s is None or len(s) == 0:
+                continue
+            a = s[s.index <= pd.Timestamp(entry_dt)]
+            b = s[s.index <= pd.Timestamp(exit_dt)]
+            if len(a) and len(b) and float(a.iloc[-1]) > 0:
+                rets.append(float(b.iloc[-1]) / float(a.iloc[-1]) - 1)
+        return sum(rets) / len(rets) if rets else None
 
     def compute(self) -> list:
         if len(self.runs) < 2:
@@ -127,12 +167,19 @@ class ReturnAnalyzer:
             bench_curr = self.benchmark.price_on_or_before(curr_dt)
             benchmark_return = bench_curr / bench_prev - 1
 
+            # [반사실] 이 구간에 top10을 매수했다면(가드 없었을 때)
+            if_inv = self._if_invested(prev_dt, curr_dt)
+            # 가드효과 = 실제(현금/보유) - 매수했을때. +면 가드가 손실을 아낌
+            guard_effect = (portfolio_return - if_inv) if if_inv is not None else None
+
             results.append({
                 "from": prev["updated_at"],
                 "to": curr["updated_at"],
                 "portfolio_return_pct": round(portfolio_return * 100, 2),
                 "benchmark_return_pct": round(benchmark_return * 100, 2),
                 "relative_return_pct": round((portfolio_return - benchmark_return) * 100, 2),
+                "if_invested_pct": round(if_inv * 100, 2) if if_inv is not None else None,
+                "guard_effect_pct": round(guard_effect * 100, 2) if guard_effect is not None else None,
                 "net_deposit": deposit,
                 "prev_equity": prev_eq,
                 "curr_equity": curr_eq,
@@ -167,11 +214,14 @@ def main():
     results = analyzer.compute()
 
     print(f"\n📊 구간별 상대수익률 (vs KODEX 200 / {BENCHMARK_TICKER})")
-    print(f"{'구간':<23} {'포트폴리오':>10} {'벤치마크':>10} {'상대수익률':>10} {'순입출금':>12}")
+    print(f"{'구간':<23} {'포트폴리오':>10} {'벤치마크':>10} {'상대':>9} "
+          f"{'매수했으면':>10} {'가드효과':>9}")
     for r in results:
+        ii = f"{r['if_invested_pct']:>+9.2f}%" if r.get('if_invested_pct') is not None else f"{'—':>10}"
+        ge = f"{r['guard_effect_pct']:>+8.2f}%" if r.get('guard_effect_pct') is not None else f"{'—':>9}"
         print(f"{r['from'][:10]}→{r['to'][:10]:<12} "
               f"{r['portfolio_return_pct']:>+9.2f}% {r['benchmark_return_pct']:>+9.2f}% "
-              f"{r['relative_return_pct']:>+9.2f}% {r['net_deposit']:>11,}원")
+              f"{r['relative_return_pct']:>+8.2f}% {ii} {ge}")
 
     print(json.dumps(results, ensure_ascii=False, indent=2))
 
