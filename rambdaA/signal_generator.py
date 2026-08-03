@@ -1,7 +1,7 @@
 """
 signal_generator.py — Lambda A: 시그널 생성기
 ========================================================
-버전: v1.0.20260803.3
+버전: v1.0.20260803.4
 실행: 매주 월요일 15:05 KST
 EventBridge: 타임존 Asia/Seoul / Cron: 5 15 ? * MON *
 Lambda 설정: Timeout 12분 / Memory 512MB
@@ -468,6 +468,19 @@ def fetch_vix(last_friday: datetime) -> tuple:
         raw_close = raw_close[raw_close.index <= pd.Timestamp(last_friday)].dropna()
         if len(raw_close) == 0:
             print("⚠️ VIX 데이터 비어있음 → UNKNOWN (BULL 기본값 폐지)")
+            return None, "UNKNOWN"
+        # [fix25] VIX 신선도·정합성 검증 (DD가드 fix22와 동일). 낡은(stale) VIX로
+        # 잘못된 BULL을 내면 미국발 폭락(VIX 급등이 나야 하는데 야후 피드가 stale)에서
+        # BEAR 대피가 해제되는 방향으로 실패한다(fail-open). yf.py는 caller의 start/end를
+        # 무시하고 range 고정값을 반환할 뿐 신선도를 보장하지 않으므로 여기서 검증한다.
+        # 실패 시 UNKNOWN → 핸들러가 직전값 carry-over 또는 안전 스킵(fail-safe).
+        ok, reason = validate_prices(
+            last_date=raw_close.index[-1].to_pydatetime(),
+            num_rows=len(raw_close),
+            last_value=float(raw_close.iloc[-1]),
+            as_of=last_friday, min_rows=1, max_stale_days=5)
+        if not ok:
+            print(f"⚠️ VIX 데이터 검증 실패({reason}) → UNKNOWN (carry-over/안전 스킵)")
             return None, "UNKNOWN"
         vix    = float(raw_close.iloc[-1])
         status = "BEAR" if vix > VIX_THRESHOLD else "BULL"
