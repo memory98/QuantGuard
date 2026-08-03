@@ -37,7 +37,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: 의존성 설치
-        run: pip install urllib3
+        run: pip install urllib3 boto3
       - name: 실행경로 단위테스트 (통과해야 배포)
         run: python -m unittest discover -s tests -v
 
