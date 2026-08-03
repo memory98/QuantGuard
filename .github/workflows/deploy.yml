@@ -29,8 +29,20 @@ jobs:
             rambdaB:
               - 'rambdaB/**'
 
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 의존성 설치
+        run: pip install urllib3
+      - name: 실행경로 단위테스트 (통과해야 배포)
+        run: python -m unittest discover -s tests -v
+
   deploy-rambda-a:
-    needs: changes
+    needs: [changes, test]
     if: needs.changes.outputs.rambdaA == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -49,7 +61,7 @@ jobs:
             --zip-file fileb://rambdaA.zip
 
   deploy-rambda-b:
-    needs: changes
+    needs: [changes, test]
     if: needs.changes.outputs.rambdaB == 'true'
     runs-on: ubuntu-latest
     steps:
