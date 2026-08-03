@@ -1,5 +1,5 @@
 # korea.py — Lambda B: 국내 주식 주문 집행 모듈
-# 버전: v1.0.20260713.1
+# 버전: v1.0.20260803.2 (fix23 중복제거)
 # 수정 이력:
 #   제미나이     : 실시간 현재가, 총자산 직접계산, BEAR 조기종료, 예수금 검증
 #   Claude fix1  : TR_ID 오류 수정 (TTTC0802U→TTTC0841U 등)
@@ -34,28 +34,11 @@ from config import (
     SELL_SETTLE_POLL_INTERVAL,
     PRICE_CALL_SLEEP,
 )
+# [fix23] 공통 함수 통합 — get_tick_size/calc_limit_price/execute_order 중복 제거(단일 소스)
+from kis_common import get_tick_size, calc_limit_price, execute_order  # noqa: F401
 
 BULL_LIMIT_RATE     = 0.01
 SIGNAL_MAX_AGE_SECS = 3600
-
-
-# ============================================================
-# 호가 단위 및 지정가 계산
-# ============================================================
-
-def get_tick_size(price: float) -> int:
-    """ETF 호가 단위 반환 (가격대 무관 5원 고정)"""
-    return 5
-
-
-def calc_limit_price(current_price: float, rate: float) -> int:
-    raw_price = current_price * (1 + rate)
-    tick      = get_tick_size(raw_price)
-    if rate >= 0:
-        limit_price = (int(raw_price // tick) + 1) * tick
-    else:
-        limit_price = int(raw_price // tick) * tick
-    return max(limit_price, tick)
 
 
 # ============================================================
@@ -224,59 +207,7 @@ def fetch_available_cash(token: str) -> int:
 
 
 # ============================================================
-# 주문 실행 함수
-# ============================================================
-
-def execute_order(token: str, code: str, qty: int,
-                  is_buy: bool, limit_price: int = 0) -> bool:
-    if qty <= 0:
-        return False
-
-    label      = "매수" if is_buy else "매도"
-    order_type = f"지정가({limit_price:,}원)" if limit_price > 0 else "시장가"
-
-    if FORCE_TEST_MODE:
-        print(f"🧪 [테스트 모드 주문 성공 시뮬레이션] "
-              f"[{label} {order_type}] {code} {qty}주 — 실제 주문 미전송")
-        return True
-
-    # [fix13] 국내 주식 현물 현금 주문 TR_ID 교정
-    # 기존 TTTC0841U(매수)/TTTC0815U(매도) → 오류 원인
-    # 정정 TTTC0802U(매수)/TTTC0801U(매도) — KIS 공식 명세 기준
-    tr_id    = "TTTC0802U" if is_buy else "TTTC0801U"
-    is_limit = limit_price > 0
-    http     = urllib3.PoolManager()
-    url      = f"{URL_BASE}/uapi/domestic-stock/v1/trading/order-cash"
-    headers  = {
-        "content-type":  "application/json",
-        "authorization": f"Bearer {token}",
-        "appkey":        KIS_APPKEY,
-        "appsecret":     KIS_APPSECRET,
-        "tr_id":         tr_id,
-        "custtype":      "P",   # [fix13] 개인 고객 식별 헤더 추가 (필수)
-    }
-    body = {
-        "CANO":         KIS_ACCOUNT,
-        "ACNT_PRDT_CD": KIS_PRDT_CODE,
-        "PDNO":         code,
-        "ORD_DVSN":     "00" if is_limit else "01",
-        "ORD_QTY":      str(qty),
-        "ORD_UNPR":     str(limit_price) if is_limit else "0",
-    }
-    try:
-        res      = http.request("POST", url, headers=headers,
-                                body=json.dumps(body).encode("utf-8"))
-        res_data = json.loads(res.data.decode("utf-8"))
-        if res_data.get("rt_cd") == "0":
-            print(f"✅ [{label} {order_type} 성공] {code} {qty}주")
-            return True
-        else:
-            print(f"❌ [{label} 실패] {code}: {res_data.get('msg1', '')}")
-    except Exception as e:
-        print(f"❌ 주문 전송 에러 ({code}): {e}")
-    return False
-
-
+# 주문 실행 함수 — [fix23] kis_common.execute_order 로 통합(상단에서 import)
 # ============================================================
 # [fix15] 매도 체결 확인 polling — 고정 10초 대기 대체
 # ============================================================

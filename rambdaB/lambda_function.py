@@ -1,5 +1,5 @@
 # lambda_function.py — Lambda B: 메인 제어 타워
-# 버전: v1.0.20260709.1
+# 버전: v1.0.20260803.2 (fix23 중복제거+잔고하드닝)
 # [변경 이력]
 #   기능 1  : 주문 집행 완료 후 텔레그램 영수증 발송
 #   기능 2  : 핵심 로직 전체 try-except + traceback 텔레그램 에러 자백
@@ -12,6 +12,7 @@
 # EventBridge: 타임존 Asia/Seoul / Cron: 15 15 ? * MON * (15:15 KST)
 
 import json
+import time
 import datetime
 import traceback
 import urllib3
@@ -23,6 +24,8 @@ from config import (
     FORCE_TEST_MODE,
     TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
 )
+# [fix23] 공통 함수 통합(중복 제거) — usa.py 연동 execute_order 포함
+from kis_common import get_tick_size, calc_limit_price, execute_order  # noqa: F401
 from korea import run_korea_rebalancing
 from usa   import run_usa_rebalancing
 
@@ -195,25 +198,7 @@ def build_execution_report(
 
 
 # ============================================================
-# 호가 단위 및 지정가 계산
-# ============================================================
-
-def get_tick_size(price: float) -> int:
-    """ETF 호가 단위: 가격대 무관 5원 고정"""
-    return 5
-
-
-def calc_limit_price(current_price: float, rate: float = -0.01) -> int:
-    raw_price = current_price * (1 + rate)
-    tick      = get_tick_size(raw_price)
-    if rate >= 0:
-        limit_price = (int(raw_price // tick) + 1) * tick
-    else:
-        limit_price = int(raw_price // tick) * tick
-    return max(limit_price, tick)
-
-
-# ============================================================
+# 호가/지정가 계산 — [fix23] kis_common 으로 통합(상단 import)
 # 공통 증권사 통신 함수
 # ============================================================
 
@@ -239,8 +224,12 @@ def get_access_token() -> str:
         raise
 
 
-def fetch_total_equity(token: str) -> int:
-    """계좌 총평가금액 조회 (TR_ID: TTTC8434R)"""
+def fetch_total_equity(token: str, max_retries: int = 3) -> int:
+    """계좌 총평가금액 조회 (TR_ID: TTTC8434R).
+
+    [fix23] rt_cd 검증 + 재시도 추가 — korea.fetch_present_holdings(fix14)와 동일 하드닝.
+    유량제한(EGW00201) 등 비정상 응답 시 즉시 실패하지 않고 재시도, 전부 실패하면 예외.
+    """
     http = urllib3.PoolManager()
     url  = f"{URL_BASE}/uapi/domestic-stock/v1/trading/inquire-balance"
     headers = {
@@ -250,81 +239,36 @@ def fetch_total_equity(token: str) -> int:
         "appsecret":     KIS_APPSECRET,
         "tr_id":         "TTTC8434R",
     }
-    # [fix17] 쿼리 파라미터 공식 규격(TTTC8434R) 정리 — korea.py와 동일 TR
     params = (
         f"?CANO={KIS_ACCOUNT}&ACNT_PRDT_CD={KIS_PRDT_CODE}"
         "&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=02&UNPR_DVSN=01"
         "&FUND_STTL_ICLD_YN=N&FNCG_AMT_AUTO_RDPT_YN=N&PRCS_DVSN=00"
         "&CTX_AREA_FK100=&CTX_AREA_NK100="
     )
-    try:
-        res      = http.request("GET", url + params, headers=headers)
-        res_data = json.loads(res.data.decode("utf-8"))
-        output2  = res_data.get("output2", [])
-        if output2:
+    last_error = ""
+    for attempt in range(1, max_retries + 1):
+        try:
+            res      = http.request("GET", url + params, headers=headers)
+            res_data = json.loads(res.data.decode("utf-8"))
+        except Exception as e:
+            last_error = f"통신 오류: {e}"
+            print(f"⚠️ 총자산 조회 통신 실패 ({attempt}/{max_retries}): {e}")
+            time.sleep(1)
+            continue
+        rt_cd   = res_data.get("rt_cd")
+        output2 = res_data.get("output2", [])
+        if rt_cd == "0" and output2:
             return int(float(output2[0].get("tot_evlu_amt", 0)))
-        raise Exception(f"잔고 데이터 없음: {res_data.get('msg1', '')}")
-    except Exception as e:
-        print(f"❌ 잔고 조회 실패: {e}")
-        raise
+        last_error = (f"rt_cd={rt_cd}, msg_cd={res_data.get('msg_cd', '')}, "
+                      f"msg1={res_data.get('msg1', '')}")
+        print(f"⚠️ 총자산 조회 비정상 응답 ({attempt}/{max_retries}): {last_error}")
+        time.sleep(1)
+    raise Exception(f"총자산 조회 {max_retries}회 모두 실패: {last_error}")
 
 
-def execute_order(
-    token: str,
-    stock_code: str,
-    quantity: int,
-    is_buy: bool = True,
-    limit_price: int = 0,
-) -> str:
-    """lambda_function.py 내부 usa.py 연동용 주문 함수 (FORCE_TEST_MODE 분기 포함)"""
-    if quantity <= 0:
-        return "9"
-
-    label      = "매수" if is_buy else "매도"
-    order_type = f"지정가({limit_price}원)" if limit_price > 0 else "시장가"
-
-    if FORCE_TEST_MODE:
-        print(f"🧪 [테스트 모드 주문 성공 시뮬레이션] "
-              f"[{label} {order_type}] {stock_code} {quantity}주 — 실제 주문 미전송")
-        return "0"
-
-    # [fix14] korea.py fix13과 동일하게 TR_ID 교정 (TTTC0841U/0815U는 오류 원인)
-    tr_id    = "TTTC0802U" if is_buy else "TTTC0801U"
-    is_limit = limit_price > 0
-    http     = urllib3.PoolManager()
-    url      = f"{URL_BASE}/uapi/domestic-stock/v1/trading/order-cash"
-    headers  = {
-        "content-type":  "application/json",
-        "authorization": f"Bearer {token}",
-        "appkey":        KIS_APPKEY,
-        "appsecret":     KIS_APPSECRET,
-        "tr_id":         tr_id,
-        "custtype":      "P",
-    }
-    body = {
-        "CANO":         KIS_ACCOUNT,
-        "ACNT_PRDT_CD": KIS_PRDT_CODE,
-        "PDNO":         stock_code,
-        "ORD_DVSN":     "00" if is_limit else "01",
-        "ORD_QTY":      str(quantity),
-        "ORD_UNPR":     str(limit_price) if is_limit else "0",
-    }
-    try:
-        res      = http.request("POST", url,
-                                headers=headers,
-                                body=json.dumps(body).encode("utf-8"))
-        res_data = json.loads(res.data.decode("utf-8"))
-        rt_cd    = res_data.get("rt_cd", "9")
-        if rt_cd == "0":
-            print(f"✅ [{label} {order_type} 성공] {stock_code} {quantity}주")
-        else:
-            print(f"❌ [{label} 거부] {stock_code}: {res_data.get('msg1', '')}")
-        return rt_cd
-    except Exception as e:
-        print(f"❌ 주문 전송 에러 ({stock_code}): {e}")
-        raise
-
-
+# ============================================================
+# 주문 함수 — [fix23] kis_common.execute_order 로 통합(상단 import).
+#            usa.py가 execute_order_fn 으로 받아 사용(현재 뼈대).
 # ============================================================
 # Lambda 메인 핸들러
 # ============================================================
