@@ -1,7 +1,7 @@
 """
 signal_generator.py — Lambda A: 시그널 생성기
 ========================================================
-버전: v1.0.20260803.4
+버전: v1.0.20260803.5
 실행: 매주 월요일 15:05 KST
 EventBridge: 타임존 Asia/Seoul / Cron: 5 15 ? * MON *
 Lambda 설정: Timeout 12분 / Memory 512MB
@@ -365,9 +365,10 @@ def calc_momentum_scores(etf_df: pd.DataFrame, last_friday: datetime) -> list:
         return []
     print(f"   유니버스 커버리지: {len(loaded)}/{len(tickers)} ({coverage*100:.0f}%)")
 
-    scores       = []
-    skipped_new  = 0
-    skipped_err  = 0
+    scores        = []
+    skipped_new   = 0
+    skipped_err   = 0
+    skipped_stale = 0   # [fix26] current 신선도 미달로 제외한 종목 수(#OPEN-2b)
 
     for ticker in all_close.columns:
         code = ticker.replace(".KS", "")
@@ -389,6 +390,18 @@ def calc_momentum_scores(etf_df: pd.DataFrame, last_friday: datetime) -> list:
             if len(current_series) == 0:
                 continue
             current = float(current_series.iloc[-1])
+
+            # [fix26] current 신선도 검증(#OPEN-2b): 마지막 유효 종가가 last_friday 대비
+            # 너무 오래됐으면(거래정지/야후 종목별 stale) 그 종목을 스코어에서 제외한다.
+            # 옛날 가격의 모멘텀이 top10에 끼어 실매수되는 것 방지(fail-safe: 의심 종목 제외).
+            # 유니버스가 통째로 stale이면 대부분 제외돼 scores가 비고 → 핸들러 500 → B가 포지션 유지.
+            ok_fresh, _ = validate_prices(
+                last_date=current_series.index[-1].to_pydatetime(),
+                num_rows=len(current_series), last_value=current,
+                as_of=last_friday, min_rows=1, max_stale_days=5)
+            if not ok_fresh:
+                skipped_stale += 1
+                continue
 
             # [fix9] base: base_date 이후 첫 번째 유효 거래일 종가
             # → 정확히 126 영업일 전 날짜에 가장 가까운 실제 거래일
@@ -423,7 +436,8 @@ def calc_momentum_scores(etf_df: pd.DataFrame, last_friday: datetime) -> list:
         except Exception:
             continue
 
-    print(f"   신규 상장 제외: {skipped_new}개 / 데이터 오류 제외: {skipped_err}개")
+    print(f"   신규 상장 제외: {skipped_new}개 / 데이터 오류 제외: {skipped_err}개 "
+          f"/ 신선도 미달 제외: {skipped_stale}개")
     return sorted(scores, key=lambda x: x["momentum"], reverse=True)
 
 
