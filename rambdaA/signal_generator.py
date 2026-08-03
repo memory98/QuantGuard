@@ -1,7 +1,7 @@
 """
 signal_generator.py — Lambda A: 시그널 생성기
 ========================================================
-버전: v1.0.20260803.1
+버전: v1.0.20260803.3
 실행: 매주 월요일 15:05 KST
 EventBridge: 타임존 Asia/Seoul / Cron: 5 15 ? * MON *
 Lambda 설정: Timeout 12분 / Memory 512MB
@@ -57,6 +57,13 @@ from config import (
 NUM_TARGETS    = 10     # 최종 매수 종목 수
 NUM_CANDIDATES = 15     # [fix16] 순위 히스테리시스용 확장 후보 풀 (섹터당 1개 유지, 11~15위는 보유 유지 판정에만 사용)
 VOLUME_CUTOFF  = 100    # 거래대금 컷오프 (상위 N개)
+
+# [fix24] 유니버스 커버리지 가드 — 배치 부분 실패로 반쪽 유니버스에서 top10을 뽑는 사고 방지.
+# 100종목을 50개씩 2배치로 받는데, 한 배치가 통째로 실패해도(yfinance 장애 등)
+# 기존엔 `all_close.empty`만 봐서 나머지 50종목만으로 매수 대상을 뽑고 조용히 실전 집행했다.
+# 스코어된 종목이 요청 유니버스의 이 비율 미만이면 시그널 생성을 중단(핸들러 500 → 시그널
+# 미갱신 → Lambda B가 STALE_SIGNAL_ABORT로 포지션 유지)해 fail-safe로 끝낸다.
+MIN_UNIVERSE_COVERAGE = 0.7
 
 # [fix19] 국내 드로다운 가드 — VIX(미국 지수)가 국내 단독 폭락에 장님인 문제 보완
 # 2026-07 실사고: 코스피 20일 고점 대비 -26% 폭락 동안 VIX는 15~17 유지 → BEAR 미발동
@@ -345,6 +352,18 @@ def calc_momentum_scores(etf_df: pd.DataFrame, last_friday: datetime) -> list:
 
     if all_close.empty:
         return []
+
+    # [fix24] 커버리지 가드: 배치 부분 실패로 반쪽 유니버스가 된 경우 중단(fail-safe).
+    # 상장폐지/무거래로 개별 종목이 비는 건 정상이므로 all-NaN 열은 제외하고 실제
+    # 데이터가 있는 종목 수로 판정한다.
+    loaded = [c for c in all_close.columns if all_close[c].notna().any()]
+    coverage = len(loaded) / len(tickers) if tickers else 0.0
+    if coverage < MIN_UNIVERSE_COVERAGE:
+        print(f"🚨 유니버스 커버리지 부족: {len(loaded)}/{len(tickers)} "
+              f"({coverage*100:.0f}% < {MIN_UNIVERSE_COVERAGE*100:.0f}%) "
+              f"→ 배치 부분 실패 의심, 시그널 생성 중단(포지션 유지)")
+        return []
+    print(f"   유니버스 커버리지: {len(loaded)}/{len(tickers)} ({coverage*100:.0f}%)")
 
     scores       = []
     skipped_new  = 0
