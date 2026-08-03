@@ -79,7 +79,7 @@
 
 ---
 
-## ② 발견 이력 원장 (매번 갱신) — 최종 갱신 2026-08-03
+## ② 발견 이력 원장 (매번 갱신) — 최종 갱신 2026-08-03 (fix25)
 
 ### 컴포넌트 리스크 맵 & 감사 커버리지
 > "적용 렌즈"에 L1~L5 중 이미 통과한 것을 적는다. 다섯 개가 다 차야 "감사 완료".
@@ -90,24 +90,25 @@
 > | `rambdaB/korea.py` (집행) | 💰💰💰 | 08-03 | L1,L5 | L2·L3·L4 남음. ↻(fix23 후). **#OPEN-1** |
 > | `rambdaB/lambda_function.py` | 💰💰💰 | 08-03 | L1,L5 | L2·L3·L4 남음. ↻(fix23 후) |
 > | `rambdaB/kis_common.py` | 💰💰💰 | 08-03 | L1,L5 | L2·L4 남음. ↻(신규 통합코드) |
-> | `rambdaA/signal_generator.py` | 💰💰 | 08-03 | L1,L3(부분) | L2·L4·L5 남음. ↻(fix24 후). **#OPEN-2** |
-> | `rambdaA/yf.py` (야후 수집) | 💰💰 | — | 없음 | **전 렌즈 미감사** — 단일 소스·파싱·range 하드코딩 |
+> | `rambdaA/signal_generator.py` | 💰💰 | 08-03 | L1,L3(VIX✓) | L2·L4·L5 남음. ↻(fix25 후). 모멘텀 stale=**#OPEN-2b** |
+> | `rambdaA/yf.py` (야후 수집) | 💰💰 | 08-03 | L3,L5 | L2(길이불일치)·L4 남음. start/end 무시·range 하드코딩 확인 |
 > | `rambdaA/fdr.py` (ETF 목록) | 💰💰 | 부분 | L1(부분) | L2~L5 남음(fix20 정렬만) |
 > | `rambdaA/data_guard.py`/`s3_keys.py` | 💰 | 08-03 | L1,L2 | L3 남음(신규 fix22) |
 > | `dashboard/`·`paper_trader/`·`backtest/`·`scripts/` | 🚫 종이 | — | — | 실돈 아님 — 후순위 |
 
-> **다음 감사 후보(우선순):** ① **#OPEN-2 모멘텀·VIX stale**(signal_generator L3 심화) →
-> ② `rambdaA/yf.py` 전 렌즈(미감사 💰💰, 실행부 아래 데이터 소스라 사실상 최상류) →
-> ③ rambdaB 집행부 **L2(경계값)·L4(재실행/부분실패 상태)** 재감사(fix23 후 ↻).
+> **다음 감사 후보(우선순):** ① **#OPEN-2b 모멘텀 종목별 stale**(signal_generator L3 마무리:
+> current_series 마지막 바 신선도 미검증) → ② rambdaB 집행부 **L2(경계값)·L4(재실행/부분실패
+> 상태)** 재감사(fix23 후 ↻) → ③ `yf.py` **L2**(closes/timestamps 길이 불일치 시 조용한 드롭).
 
 ### 미해결 / 보류 항목 (다음 감사에서 우선 검토)
 - **#OPEN-1 매수 체결확인 없음** (korea.py) — 지정가 매수는 접수=완료로 간주. 미체결 시
   잔여현금 재투입 계산이 과소. 완전 해결은 매수도 체결폴링 필요(비용·복잡도↑) → 보류.
   *판단:* fail-safe(돈이 없어지진 않음, 다음 주 재조정으로 수렴)라 우선순위 중.
-- **#OPEN-2 모멘텀 `current`·VIX stale 미검증** — fix22 신선도 가드가 DD가드에만 걸림.
-  데이터가 있으나 낡은 경우 잘못된 랭킹/가드 가능. VIX는 야후가 대개 에러로 실패해 fix15
-  UNKNOWN 경로가 잡고, 모멘텀 동시 stale은 fix24 커버리지가 일부만 커버. → **다음 1순위.**
-  *주의:* 신호 파라미터가 아니라 신뢰성 가드라 동결 정책과 무관하게 손대도 됨.
+- ~~#OPEN-2 VIX stale 미검증~~ → **fix25 해소** (fetch_vix에 validate_prices 적용, stale→UNKNOWN).
+- **#OPEN-2b 모멘텀 `current` 종목별 stale 미검증** — calc_momentum_scores의 current_series는
+  `<= last_friday` 마지막 유효 종가를 쓰되 그 바가 얼마나 최신인지 검증 안 함. 거래정지 종목이
+  옛날 가격으로 랭킹에 낄 수 있음. VIX(시장 대피 이진결정)보다 낮은 스테이크(1종목)이고 동시
+  stale은 fix24 커버리지가 일부 커버. → **다음 1순위.** *주의:* 신뢰성 가드라 동결 정책과 무관.
 
 ### 처리 완료 이력 (근본원인 → 조치)
 | # | 발견(근본원인) | 조치 | 버전 |
@@ -118,6 +119,7 @@
 | fix22 | 야후 stale/부족 데이터로 가드 오판, 테스트가 실아카이브 오염, 실행버그 무방비 | data_guard 신선도검증 + s3_keys 격리 + CI 배포게이트 | 20260803.1 |
 | fix23 | 주문/가격 함수 중복(수동 동기화 잠복버그), fetch_total_equity rt_cd 미검증 | kis_common 단일소스 + 하드닝 + identity 테스트 | 20260803.2 |
 | fix24 | 배치 부분 실패 → 반쪽 유니버스로 실매수 | 커버리지 가드(70%) → fail-safe 중단 | 20260803.3 |
+| fix25 | stale VIX로 BULL 오판(미국발 폭락 fail-open) | fetch_vix validate_prices 검증 → stale→UNKNOWN | 20260803.4 |
 
 ### 검증된 fail-safe 체인 (감사 시 재확인용)
 - A 실패/중단(500) → `quant_signals.json` 미갱신 → B가 `updated_at` 나이 > `SIGNAL_MAX_AGE_SECS`
