@@ -8,3 +8,5 @@ dashboard
 log
 CLAUDE.md
 data/
+docs/
+s3_archive/
