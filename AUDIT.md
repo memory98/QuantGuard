@@ -95,7 +95,7 @@
 
 ---
 
-## ② 발견 이력 원장 (매번 갱신) — 최종 갱신 2026-08-03 (fix27)
+## ② 발견 이력 원장 (매번 갱신) — 최종 갱신 2026-08-04 (fix28)
 
 ### 컴포넌트 리스크 맵 & 감사 커버리지
 > "적용 렌즈"에 L1~L5 중 이미 통과한 것을 적는다. 다섯 개가 다 차야 "감사 완료".
@@ -103,8 +103,8 @@
 >
 > | 컴포넌트 | 돈-리스크 | 최근 | 적용 렌즈 | 남은/상태 |
 > |---|---|---|---|---|
-> | `rambdaB/korea.py` (집행) | 💰💰💰 | 08-03 | L1,L2(재투입✓),L5 | L2(메인 사이징 e2e)·L3·L4 남음. ↻(fix23 후). **#OPEN-1·E2E** |
-> | `rambdaB/lambda_function.py` | 💰💰💰 | 08-03 | L1,L5 | L2·L3·L4 남음. ↻(fix23 후) |
+> | `rambdaB/korea.py` (집행) | 💰💰💰 | 08-04 | L1,L2✓(재투입+메인 사이징),L4(매도분기),L5 | L3 남음. ↻(fix23 후). **#OPEN-1** |
+> | `rambdaB/lambda_function.py` | 💰💰💰 | 08-03 | L1,L5 | **L2·L4 남음(다음 1순위)**·L3. ↻(fix23 후) |
 > | `rambdaB/kis_common.py` | 💰💰💰 | 08-03 | L1,L5 | L2·L4 남음. ↻(신규 통합코드) |
 > | `rambdaA/signal_generator.py` | 💰💰 | 08-03 | L1,L3✓(DD·VIX·모멘텀) | L2·L4·L5 남음. ↻(fix26 후). #OPEN-2 계열 종결 |
 > | `rambdaA/yf.py` (야후 수집) | 💰💰 | 08-03 | L3,L5 | L2(길이불일치)·L4 남음. start/end 무시·range 하드코딩 확인 |
@@ -112,19 +112,17 @@
 > | `rambdaA/data_guard.py`/`s3_keys.py` | 💰 | 08-03 | L1,L2 | L3 남음(신규 fix22) |
 > | `dashboard/`·`paper_trader/`·`backtest/`·`scripts/` | 🚫 종이 | — | — | 실돈 아님 — 후순위 |
 
-> **다음 감사 후보(우선순):** ① **#OPEN-E2E** run_korea_rebalancing 메인 매수 사이징(target_qty·
-> 밴드·예수금 축소)의 e2e 하네스 — S3/잔고/시세 목킹으로 L2·L4 완결 → ② `rambdaB/lambda_function.py`
-> **L2·L4**(BEAR/BULL 분기 상태·주간수익률 계산) 재감사 → ③ **#OPEN-V 검증 격차**(실캡처 골든
-> 응답 → KIS 필드 스키마 V5) → ④ `yf.py` **L2**(closes/timestamps 길이 불일치 시 조용한 드롭)·L4.
+> **다음 감사 후보(우선순):** ① `rambdaB/lambda_function.py` **L2·L4**(BEAR/BULL 분기 상태·
+> 주간수익률 계산·CASH_RESERVE 초과 처리) 재감사(fix23 후 ↻) → ② **#OPEN-V 검증 격차**(실캡처
+> 골든 응답 → KIS 필드 스키마 V5) → ③ `yf.py` **L2**(closes/timestamps 길이 불일치 시 조용한
+> 드롭)·L4 → ④ `fdr.py` L2~L5(fix20 정렬만 봄).
 
 ### 미해결 / 보류 항목 (다음 감사에서 우선 검토)
 - **#OPEN-1 매수 체결확인 없음** (korea.py) — 지정가 매수는 접수=완료로 간주. 미체결 시
   잔여현금 재투입 계산이 과소. 완전 해결은 매수도 체결폴링 필요(비용·복잡도↑) → 보류.
   *판단:* fail-safe(돈이 없어지진 않음, 다음 주 재조정으로 수렴)라 우선순위 중.
-- **#OPEN-E2E 메인 리밸런싱 사이징 미검증** — reinvest_leftover_cash는 fix27로 V4 커버했으나
-  run_korea_rebalancing 본체(target_qty=int(budget_per//price), 노트레이드 밴드, 예수금 부족 축소,
-  available_cash 차감 순서)는 S3/잔고/시세 목킹이 무거워 e2e 테스트가 아직 없음. 로직은 정독상
-  견고하나 검증 V0. → 목킹 하네스로 L2·L4 완결 필요. *다음 1순위.*
+- ~~#OPEN-E2E 메인 리밸런싱 사이징 미검증~~ → **fix28 해소** (Harness e2e로 균등배분 수량·예수금
+  부족 과지출 금지·순위 이탈 매도·히스테리시스 검증, 검증 V4). 로직 버그 없음 확인. korea.py L2·L4 완결.
 - ~~#OPEN-2 VIX stale 미검증~~ → **fix25 해소** (fetch_vix에 validate_prices 적용, stale→UNKNOWN).
 - ~~#OPEN-2b 모멘텀 current 종목별 stale~~ → **fix26 해소** (current에 validate_prices, 미달 종목 제외,
   검증 V4 경계 스윕). #OPEN-2 계열 전부 종결 — signal_generator L3 신선도는 DD·VIX·모멘텀 3경로 커버.
@@ -145,6 +143,7 @@
 | fix25 | stale VIX로 BULL 오판(미국발 폭락 fail-open) | fetch_vix validate_prices 검증 → stale→UNKNOWN | 20260803.4 | V2 |
 | fix26 | 모멘텀 current 종목별 stale → 옛날가 top10 편입 | current validate_prices 검증 → 미달 종목 제외 | 20260803.5 | **V4** (경계 스윕) |
 | fix27 | 재투입 수학 무검증(💰💰💰 V0) — 버그는 없었음 | reinvest 돈 불변식 테스트(과투입 금지·종목당 상한) | 20260803.6 (테스트만) | **V4** (속성 스윕) |
+| fix28 | 메인 사이징 무검증(💰💰💰 V0) — 버그는 없었음 | run_korea_rebalancing e2e(균등배분·과지출 금지·순위 이탈·히스테리시스) | 20260804.1 (테스트만) | **V4** (e2e 불변식) |
 
 ### 검증된 fail-safe 체인 (감사 시 재확인용)
 - A 실패/중단(500) → `quant_signals.json` 미갱신 → B가 `updated_at` 나이 > `SIGNAL_MAX_AGE_SECS`
