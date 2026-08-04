@@ -1,5 +1,5 @@
 # lambda_function.py — Lambda B: 메인 제어 타워
-# 버전: v1.0.20260803.2 (fix23 중복제거+잔고하드닝)
+# 버전: v1.0.20260804.3 (fix30 조용한 스킵 관측성 — STALE/S3_ERROR/NO_TARGETS 텔레그램 경고)
 # [변경 이력]
 #   기능 1  : 주문 집행 완료 후 텔레그램 영수증 발송
 #   기능 2  : 핵심 로직 전체 try-except + traceback 텔레그램 에러 자백
@@ -386,9 +386,34 @@ def lambda_handler(event, context):
             return {"statusCode": 200,
                     "body": json.dumps(korea_result, ensure_ascii=False)}
 
-        if korea_result.get("result") in (
-            "S3_SIGNAL_ERROR", "NO_TARGETS", "STALE_SIGNAL_ABORT", "MARKET_CLOSED"
-        ):
+        # [fix30] 조용한 스킵 관측성: A 지연·실패로 매매가 통째로 스킵될 때 텔레그램 경고.
+        # VIX_UNKNOWN은 이미 경고하는데 STALE/S3_ERROR/NO_TARGETS는 침묵이라, 사용자가
+        # "이번 주 리밸런싱이 안 된 사실"을 모르는 관측성 공백이 있었음(매매 로직은 무변경).
+        # MARKET_CLOSED(휴장일)는 정상 상황이라 매주 알림 스팸을 피해 조용히 둔다.
+        _skip_msgs = {
+            "STALE_SIGNAL_ABORT": (
+                "🚨 <b>[QuantGuard] 시그널 만료 — 리밸런싱 스킵</b>\n"
+                "최신 시그널이 허용 나이(1시간)를 초과했습니다. Lambda A(시그널 생성)가 "
+                "지연·실패했을 수 있습니다.\n이번 주 매매를 건너뛰고 기존 포지션을 유지합니다.\n"
+                "Lambda A 실행 로그와 S3 quant_signals.json의 updated_at을 확인하세요."
+            ),
+            "S3_SIGNAL_ERROR": (
+                "🚨 <b>[QuantGuard] 시그널 조회 실패 — 리밸런싱 스킵</b>\n"
+                "S3에서 최신 시그널(quant_signals.json)을 읽지 못했습니다. Lambda A가 시그널을 "
+                "올리지 못했을 수 있습니다.\n이번 주 매매를 건너뜁니다. Lambda A 상태와 S3를 확인하세요."
+            ),
+            "NO_TARGETS": (
+                "⚠️ <b>[QuantGuard] 매수 대상 0개 — 리밸런싱 스킵</b>\n"
+                "시그널에 매수 종목이 없습니다(top_10_stocks 비어 있음).\n"
+                "이번 주 매매를 건너뜁니다. Lambda A의 모멘텀 계산 결과를 확인하세요."
+            ),
+        }
+        _result = korea_result.get("result")
+        if _result in _skip_msgs:
+            send_telegram(_skip_msgs[_result])
+            return {"statusCode": 200,
+                    "body": json.dumps(korea_result, ensure_ascii=False)}
+        if _result == "MARKET_CLOSED":
             return {"statusCode": 200,
                     "body": json.dumps(korea_result, ensure_ascii=False)}
 

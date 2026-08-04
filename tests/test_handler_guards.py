@@ -59,10 +59,11 @@ class TestHandlerGuards(unittest.TestCase):
                                return_value=korea_result) as m_korea, \
              mock.patch.object(lf, "run_usa_rebalancing",
                                return_value={"result": "USA_OK"}) as m_usa, \
-             mock.patch.object(lf, "send_telegram"), \
+             mock.patch.object(lf, "send_telegram") as m_tele, \
              mock.patch.object(lf, "CASH_RESERVE", cash_reserve):
             m_boto.client.return_value = fake_s3
             res = lf.lambda_handler(event, None)
+        self._last_tele = m_tele
         return res, m_korea, m_usa
 
     def test_duplicate_run_blocked(self):
@@ -100,6 +101,24 @@ class TestHandlerGuards(unittest.TestCase):
         self.assertEqual(body["market_status"], "BEAR")
         m_usa.assert_not_called()               # 미국 ETF 스킵
         self.assertTrue(len(fake.puts) >= 1, "BEAR에도 아카이브를 남겨야 함")
+
+    def test_silent_skips_now_alert(self):
+        """④ [fix30] STALE/S3_ERROR/NO_TARGETS는 텔레그램 경고 — 조용한 미실행 방지."""
+        for result in ("STALE_SIGNAL_ABORT", "S3_SIGNAL_ERROR", "NO_TARGETS"):
+            with self.subTest(result=result):
+                fake = FakeS3(today_archive_exists=False)
+                self._run({"force_run": True}, fake,
+                          korea_result={"result": result})
+                self.assertTrue(self._last_tele.called,
+                                f"{result}은 텔레그램 경고를 보내야 함")
+
+    def test_market_closed_stays_silent(self):
+        """휴장일(MARKET_CLOSED)은 정상이라 경고 스팸을 내지 않는다."""
+        fake = FakeS3(today_archive_exists=False)
+        self._run({"force_run": True}, fake,
+                  korea_result={"result": "MARKET_CLOSED"})
+        self.assertFalse(self._last_tele.called,
+                         "휴장일은 매주 알림을 보내면 안 됨")
 
 
 if __name__ == "__main__":
