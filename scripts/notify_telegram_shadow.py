@@ -13,7 +13,39 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-LEDGER = Path(__file__).resolve().parent.parent / "data" / "shadow_ledger.json"
+ROOT = Path(__file__).resolve().parent.parent
+LEDGER = ROOT / "data" / "shadow_ledger.json"
+SQ_LEDGER = ROOT / "signal_quality_ledger.json"
+
+
+def render_signal_quality(sq: dict | None) -> list[str]:
+    """신호 품질 요약(#OPEN-S/#OPEN-B). 원장이 없거나 비면 아무 줄도 내지 않는다.
+
+    판정(STEP B)이 INSUFFICIENT인 동안에는 '경향'만 보이고 결론을 내지 않는다.
+    """
+    if not sq or not sq.get("records"):
+        return []
+    last = sq["records"][-1]
+    v = sq.get("verdict", {})
+    lines = ["", "── 신호 품질(순위 예측력) ──"]
+
+    if last.get("ic") is not None:
+        bear = " ·BEAR라 미매수" if last.get("market_status") == "BEAR" else ""
+        lines.append(f"• 직전주 IC: {last['ic']:+.2f} / "
+                     f"top10−유니버스 {last['spread_pct']:+.2f}%p{bear}")
+    else:
+        lines.append("• 직전주: 계산 불가(가격 결손/표본 부족)")
+
+    if last.get("proxy_corr") is not None:
+        lines.append(f"• 가드 대리지표 상관(top10↔KODEX200): {last['proxy_corr']:.2f}")
+
+    status = v.get("status")
+    if status == "INSUFFICIENT":
+        lines.append(f"• 판정: 보류 — {v.get('weeks', 0)}/{sq.get('criteria', {}).get('min_sample_weeks', 26)}주 "
+                     f"(앞으로 {v.get('need', '?')}주)")
+    elif status:
+        lines.append(f"• 판정: {status} (IC 26주MA {v.get('ic_ma', 0):+.3f})")
+    return lines
 
 
 def render_account(ledger: dict) -> str:
@@ -47,6 +79,16 @@ def main():
         lines.append(f"• {name}: {v:+.2f}%")
     lines.append(f"• 벤치(KODEX200): {d.get('benchmark_pct', 0):+.2f}%")
     lines.append(render_account(d))
+
+    # 신호 품질(#OPEN-S/#OPEN-B) — 원장이 아직 없으면 아무 줄도 붙지 않는다
+    sq = None
+    if SQ_LEDGER.exists():
+        try:
+            sq = json.loads(SQ_LEDGER.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            print("⚠️ 신호품질 원장 파손 → 해당 섹션 생략")
+    lines += render_signal_quality(sq)
+
     note = d.get("note", "")
     if note:
         lines += ["", note]

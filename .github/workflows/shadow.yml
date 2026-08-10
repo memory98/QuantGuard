@@ -1,7 +1,7 @@
 name: Shadow Forward Validation
 
 # 섀도우 전진검증 파이프라인 주간 자동 실행 (맥북 무관, GitHub 클라우드에서 실행)
-# 매주 월 07:00 UTC = 16:00 KST — Lambda A(15:05)/B(15:15) 이후.
+# 매주 월 07:00 UTC = 16:00 KST — Lambda A(14:00)/B(14:20) 이후.
 # S3 스냅샷을 읽어 shadow_forward.py 실행 → 원장(shadow_ledger.json)을 저장소에 커밋.
 on:
   schedule:
@@ -46,6 +46,11 @@ jobs:
           python backtest/shadow_forward.py | tee shadow_run_output.txt
           cp data/shadow_ledger.json shadow_ledger.json
 
+      - name: 신호 품질 관측 (#OPEN-S/#OPEN-B)
+        # 순위 예측력(IC)·가드 대리지표 상관을 누적 원장에 append.
+        # 매매 로직과 무관한 관측 전용. 원장은 저장소 루트(누적형이라 커밋 필요).
+        run: python backtest/signal_quality.py | tee signal_quality_output.txt
+
       - name: 텔레그램 성적표 요약 (시크릿 있으면 발송, 없으면 스킵)
         env:
           TELEGRAM_TOKEN: ${{ secrets.QG_TELEGRAM_TOKEN }}
@@ -56,6 +61,6 @@ jobs:
         run: |
           git config user.name "quantguard-shadow-bot"
           git config user.email "actions@github.com"
-          git add shadow_ledger.json
-          git diff --cached --quiet || git commit -m "chore: 주간 섀도우 원장 갱신 [skip ci]"
+          git add shadow_ledger.json signal_quality_ledger.json
+          git diff --cached --quiet || git commit -m "chore: 주간 섀도우·신호품질 원장 갱신 [skip ci]"
           git push

@@ -1,0 +1,46 @@
+{
+  "records": [
+    {
+      "from": "2026-08-03",
+      "to": "2026-08-10",
+      "market_status": "BEAR",
+      "ic": -0.7587,
+      "top10_pct": 0.856,
+      "uni_pct": 6.343,
+      "spread_pct": -5.487,
+      "quintiles_pct": [
+        0.78,
+        -0.543,
+        5.742,
+        9.929,
+        15.808
+      ],
+      "n": 85,
+      "proxy_corr": 0.9726,
+      "proxy_beta": 1.0715
+    }
+  ],
+  "updated_at": "2026-08-10 23:19:43",
+  "verdict": {
+    "status": "INSUFFICIENT",
+    "weeks": 1,
+    "need": 25,
+    "note": "판정 보류 — 26주 누적 전엔 경향만 본다"
+  },
+  "criteria": {
+    "min_sample_weeks": 26,
+    "ic_ma_window": 26,
+    "ic_negative_streak": 4,
+    "proxy_corr_floor": 0.8,
+    "note": "사전 고정 — 사후에 바꾸지 않는다(AUDIT.md ③ STEP B)"
+  },
+  "baseline_20260810": {
+    "source": "74주 현유니버스 고정(생존편향 있음), 2026-08-10 수동 측정",
+    "ic_mean": 0.064,
+    "ic_median": 0.151,
+    "ic_positive_ratio": 0.622,
+    "ir": 0.16,
+    "spread_mean_pct": 0.615,
+    "spread_winrate": 0.554
+  }
+}
