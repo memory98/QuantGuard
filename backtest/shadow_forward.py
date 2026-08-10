@@ -152,8 +152,30 @@ class AccountReader:
 
     @staticmethod
     def on_or_before(eq, date):
+        """as-of 조회 → (스냅샷 날짜, 총자산). 없으면 (None, None).
+
+        날짜를 함께 돌려주는 이유: 구간 양끝이 '서로 다른 스냅샷'인지 판별해야
+        한다. 금액만 보면 BEAR 현금 대피 중 자산이 한 푼도 안 변한 진짜 0% 수익과,
+        스냅샷 미갱신으로 같은 값을 두 번 읽은 결측을 구분할 수 없다.
+        """
         cand = [d for d in eq if d <= date]
-        return eq[max(cand)] if cand else None
+        if not cand:
+            return None, None
+        k = max(cand)
+        return k, eq[k]
+
+    @classmethod
+    def interval_return(cls, eq, d0, d1):
+        """구간 실계좌 수익률(소수). 채점 불가면 None.
+
+        유효 조건은 '금액이 다른가'가 아니라 '서로 다른 스냅샷인가'다.
+        100% 현금 대피 중에는 자산이 정확히 같아도 그것이 진짜 0% 수익이다.
+        """
+        t0, e0 = cls.on_or_before(eq, d0)
+        t1, e1 = cls.on_or_before(eq, d1)
+        if e0 and e1 and e0 > 0 and t0 != t1:
+            return e1 / e0 - 1
+        return None
 
 
 def portfolio_return(strat, universe, market, prices, d0, d1, prev_hold):
@@ -198,6 +220,7 @@ def main():
     ledgers = {name: {"cum": 1.0, "prev": {}, "intervals": []} for name, _, _ in specs}
     bench_cum = 1.0
     acc_cum = 1.0
+    acc_intervals = 0        # 실계좌가 실제로 채점된 구간 수(0이면 누적은 '없음'이지 0%가 아니다)
     rows = []
 
     for i in range(len(points) - 1):
@@ -224,11 +247,10 @@ def main():
         row["benchmark"] = round(b_ret * 100, 2)
 
         # 실전 계좌 (순입출금 0 가정)
-        e0 = AccountReader.on_or_before(account, d0)
-        e1 = AccountReader.on_or_before(account, d1)
-        if e0 and e1 and e0 > 0 and e1 != e0:
-            a_ret = e1 / e0 - 1
+        a_ret = AccountReader.interval_return(account, d0, d1)
+        if a_ret is not None:
             acc_cum *= (1 + a_ret)
+            acc_intervals += 1
             row["account"] = round(a_ret * 100, 2)
         else:
             row["account"] = None
@@ -251,7 +273,10 @@ def main():
     for n in names:
         print(f"   {n:<24} {(ledgers[n]['cum']-1)*100:>+8.2f}%")
     print(f"   {'benchmark KODEX200':<24} {(bench_cum-1)*100:>+8.2f}%")
-    print(f"   {'실전 계좌(순입출금0가정)':<24} {(acc_cum-1)*100:>+8.2f}%")
+    account_pct = round((acc_cum - 1) * 100, 2) if acc_intervals else None
+    print(f"   {'실전 계좌(순입출금0가정)':<24} "
+          + (f"{account_pct:>+8.2f}%" if account_pct is not None
+             else f"{'데이터 없음':>9} (채점된 구간 0개)"))
 
     # ── 원장 저장 ──
     ledger = {
@@ -260,7 +285,8 @@ def main():
         "intervals": rows,
         "cumulative": {n: round((ledgers[n]["cum"] - 1) * 100, 2) for n in names},
         "benchmark_pct": round((bench_cum - 1) * 100, 2),
-        "account_pct": round((acc_cum - 1) * 100, 2),
+        "account_pct": account_pct,          # None = 채점 가능한 구간 없음(0%와 구분)
+        "account_intervals": acc_intervals,
         "note": "폴백(top_10) 구간은 백테스트 부트스트랩. 진짜 전진 OOS는 universe 스냅샷 누적(2026-08-03~)부터.",
     }
     LEDGER_PATH.write_text(json.dumps(ledger, ensure_ascii=False, indent=2), encoding="utf-8")

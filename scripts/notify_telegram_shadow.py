@@ -16,6 +16,17 @@ from pathlib import Path
 LEDGER = Path(__file__).resolve().parent.parent / "data" / "shadow_ledger.json"
 
 
+def render_account(ledger: dict) -> str:
+    """실계좌 줄 렌더링. account_pct는 None일 수 있다(채점 가능한 구간 0개).
+
+    기본값 0을 깔면 '데이터 없음'이 '수익 0%'로 둔갑해 조용한 실패가 된다.
+    """
+    acc = ledger.get("account_pct")
+    if acc is None:
+        return "• 실계좌: 데이터 없음(채점 구간 0개)"
+    return f"• 실계좌: {acc:+.2f}%"
+
+
 def main():
     token = os.environ.get("TELEGRAM_TOKEN", "").strip()
     chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
@@ -35,7 +46,7 @@ def main():
     for name, v in d.get("cumulative", {}).items():
         lines.append(f"• {name}: {v:+.2f}%")
     lines.append(f"• 벤치(KODEX200): {d.get('benchmark_pct', 0):+.2f}%")
-    lines.append(f"• 실계좌: {d.get('account_pct', 0):+.2f}%")
+    lines.append(render_account(d))
     note = d.get("note", "")
     if note:
         lines += ["", note]
