@@ -16,11 +16,11 @@
         15.808
       ],
       "n": 85,
-      "proxy_corr": 0.9726,
-      "proxy_beta": 1.0715
+      "proxy_corr": 0.9712,
+      "proxy_beta": 1.1128
     }
   ],
-  "updated_at": "2026-08-10 23:19:43",
+  "updated_at": "2026-08-17 07:55:51",
   "verdict": {
     "status": "INSUFFICIENT",
     "weeks": 1,
