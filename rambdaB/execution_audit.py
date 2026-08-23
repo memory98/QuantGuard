@@ -32,7 +32,7 @@ from datetime import datetime
 
 import urllib3
 
-from config import FORCE_TEST_MODE
+from config import FORCE_TEST_MODE, EXEC_AUDIT_ENABLED
 
 # 매입평균가 후보 필드. 첫 번째가 KIS 공식 문서상 이름이나 저장소 내 검증 사례가
 # 없으므로 '추정'이다. 순서대로 찾아보고 없으면 None (절대 예외를 던지지 않는다).
@@ -187,6 +187,10 @@ class ExecutionAuditor:
 def run_execution_audit(token: str, balance_spec_fn, holdings_before: dict,
                         executed_orders: list, poll_interval: float = 5.0) -> dict:
     """korea.py에서 부르는 진입점. 어떤 예외도 밖으로 내보내지 않는다."""
+    if not EXEC_AUDIT_ENABLED:
+        # [fix34] 기본 OFF. 잔고 재조회도 대기도 하지 않으므로 fix33 이전과
+        # 실행 경로가 완전히 동일하다. 켜려면 Lambda 환경변수 EXEC_AUDIT_ENABLED=true.
+        return {"ok": True, "reason": "DISABLED", "orders": []}
     if FORCE_TEST_MODE:
         # 모의 모드에서는 주문이 실제로 나가지 않아 잔고가 변하지 않는다. 그대로 감사하면
         # 전 종목을 '미체결'로 기록해 아카이브에 가짜 신호를 남긴다 → 아예 건너뛴다.

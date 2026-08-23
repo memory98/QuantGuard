@@ -30,6 +30,16 @@ PRICE_CALL_SLEEP          = 0.2     # 시세조회 연속 호출 간격(초) —
 # 확실히 잡지만 Lambda 실행시간을 그만큼 잠식한다.
 EXEC_AUDIT_POLL_SECS      = 5
 
+# [fix34] 체결 관측 킬 스위치 — **기본 OFF**.
+# 이 코드는 실환경에서 한 번도 돌아본 적이 없다(2026-08-03~08-23 배포 게이트가 막혀
+# 있었고 08-24에야 처음 배포됐다). 실매매 당일에 미검증 경로를 켜지 않기 위해,
+# 기본값을 꺼둔 채 배포하고 사용자가 준비됐을 때 켠다.
+#   OFF → 잔고 재조회·대기 없음. 즉 fix33 이전과 완전히 동일하게 동작한다.
+#   ON  → Lambda 콘솔 환경변수 EXEC_AUDIT_ENABLED=true (코드 배포 불필요, 즉시 반영)
+# 켠 뒤 확인할 것: latest_signal의 execution_audit.orders 와 balance_output1_keys.
+EXEC_AUDIT_ENABLED = os.environ.get("EXEC_AUDIT_ENABLED", "false").strip().lower() in (
+    "true", "1", "yes", "on")
+
 # ── 현금 예치금 방화벽 ───────────────────────────────────────
 # 봇이 절대 건드리지 않는 격리 현금액 (단위: 원), 기본값 0 = 전액 운용
 CASH_RESERVE = int(os.environ.get("CASH_RESERVE", "0"))

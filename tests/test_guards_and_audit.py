@@ -354,6 +354,12 @@ def spec_stub():
     return "http://example.invalid/balance", {"tr_id": "TTTC8434R"}
 
 
+def audit_enabled():
+    """fix34 킬 스위치는 기본 OFF다. 감사 동작 자체를 보는 테스트는 켜고 본다."""
+    import execution_audit as ea
+    return unittest.mock.patch.object(ea, "EXEC_AUDIT_ENABLED", True)
+
+
 class TestExecutionAuditor(unittest.TestCase):
     """계약: 정확히 세거나, 조용히 포기하거나. 절대 예외를 위로 던지지 않는다."""
 
@@ -455,14 +461,16 @@ class TestRunExecutionAuditNeverRaises(unittest.TestCase):
     def test_broken_spec_fn_is_swallowed(self):
         def boom():
             raise RuntimeError("스펙 함수 폭발")
-        rep = run_execution_audit("tok", boom, {}, [{"side": "BUY", "code": "A",
-                                                    "qty": 1, "ok": True}],
-                                  poll_interval=0)
+        with audit_enabled():
+            rep = run_execution_audit("tok", boom, {}, [{"side": "BUY", "code": "A",
+                                                        "qty": 1, "ok": True}],
+                                      poll_interval=0)
         self.assertFalse(rep["ok"])
         self.assertEqual(rep["orders"], [])
 
     def test_garbage_holdings_does_not_raise(self):
-        rep = run_execution_audit("tok", spec_stub, {"A": "문자열"}, [], poll_interval=0)
+        with audit_enabled():
+            rep = run_execution_audit("tok", spec_stub, {"A": "문자열"}, [], poll_interval=0)
         self.assertIsInstance(rep, dict)
 
     def test_force_test_mode_skips_audit_entirely(self):
@@ -475,13 +483,91 @@ class TestRunExecutionAuditNeverRaises(unittest.TestCase):
         def must_not_be_called():
             raise AssertionError("FORCE_TEST_MODE인데 잔고조회를 시도했다")
 
-        with unittest.mock.patch.object(ea, "FORCE_TEST_MODE", True):
+        with audit_enabled(), unittest.mock.patch.object(ea, "FORCE_TEST_MODE", True):
             rep = run_execution_audit("tok", must_not_be_called, {},
                                       [{"side": "BUY", "code": "A", "qty": 1, "ok": True}],
                                       poll_interval=0)
         self.assertTrue(rep["ok"])
         self.assertEqual(rep["reason"], "FORCE_TEST_MODE")
         self.assertEqual(rep["orders"], [])
+
+
+class TestKillSwitchDefaultOff(unittest.TestCase):
+    """[fix34] 기본 OFF일 때 fix33 이전과 실행 경로가 완전히 같은가.
+
+    실환경 미검증 코드를 실매매 당일에 켜지 않기 위한 스위치다. '꺼져 있다'는 것은
+    단순히 결과가 비었다는 뜻이 아니라 **잔고 재조회도 sleep도 하지 않는다**는 뜻이어야
+    한다(그래야 실행시간이 그대로다). 그래서 둘 다 호출되면 실패하도록 심어 확인한다.
+    """
+
+    def setUp(self):
+        import config
+        self.cfg = config
+
+    def test_default_is_off(self):
+        """배포 기본값이 꺼짐인가 — 이게 뒤집히면 스위치의 의미가 없다."""
+        self.assertFalse(self.cfg.EXEC_AUDIT_ENABLED)
+
+    def test_disabled_makes_no_balance_call_and_no_sleep(self):
+        import execution_audit as ea
+
+        def must_not_be_called():
+            raise AssertionError("꺼져 있는데 잔고조회를 시도했다")
+
+        with unittest.mock.patch.object(ea, "EXEC_AUDIT_ENABLED", False), \
+             unittest.mock.patch.object(ea.time, "sleep",
+                                        side_effect=AssertionError("꺼져 있는데 sleep했다")):
+            rep = run_execution_audit(
+                "tok", must_not_be_called, {"367760": {"qty": 4}},
+                [{"side": "BUY", "code": "367760", "qty": 5, "ok": True}])
+        self.assertTrue(rep["ok"])
+        self.assertEqual(rep["reason"], "DISABLED")
+        self.assertEqual(rep["orders"], [])
+
+    def test_enabled_actually_audits(self):
+        """스위치를 켜면 정상 동작한다 — OFF 테스트가 '항상 통과'가 아님을 보인다."""
+        import execution_audit as ea
+        auditor_items = [{"pdno": "367760", "hldg_qty": "5"}]
+        with audit_enabled(), \
+             unittest.mock.patch.object(ea.ExecutionAuditor, "_read_balance_raw",
+                                        lambda self: auditor_items), \
+             unittest.mock.patch.object(ea.time, "sleep", lambda *_: None):
+            rep = run_execution_audit(
+                "tok", spec_stub, {},
+                [{"side": "BUY", "code": "367760", "qty": 5, "ok": True}])
+        self.assertTrue(rep["ok"])
+        self.assertEqual(rep["orders"][0]["fill_status"], "FULL")
+
+    def test_env_var_parsing(self):
+        """콘솔에서 켤 때 흔히 쓰는 표기를 모두 받아들이는가(대소문자·1/yes/on).
+
+        importlib.reload를 쓰지 않는 이유: rambdaA/config.py 와 rambdaB/config.py 가
+        **둘 다 `config`라는 이름으로** import돼 sys.modules에서 충돌한다(테스트 환경
+        한정 — 실제 Lambda는 각자 자기 것만 패키징된다). 어느 쪽이 먼저 잡히느냐에 따라
+        reload 대상이 달라지므로, 파일 경로를 명시해 rambdaB 것만 확실히 로드한다.
+        """
+        import importlib.util, os
+        path = ROOT / "rambdaB" / "config.py"
+
+        def load_with(raw):
+            if raw is None:
+                os.environ.pop("EXEC_AUDIT_ENABLED", None)
+            else:
+                os.environ["EXEC_AUDIT_ENABLED"] = raw
+            spec = importlib.util.spec_from_file_location("_rb_config_probe", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod.EXEC_AUDIT_ENABLED
+
+        try:
+            for raw, expected in [("true", True), ("TRUE", True), ("True", True),
+                                  (" true ", True), ("1", True), ("yes", True),
+                                  ("on", True), ("false", False), ("", False),
+                                  ("0", False), ("아무말", False),
+                                  (None, False)]:   # 미설정 = 기본 OFF
+                self.assertEqual(load_with(raw), expected, msg=f"raw={raw!r}")
+        finally:
+            os.environ.pop("EXEC_AUDIT_ENABLED", None)
 
 
 if __name__ == "__main__":
