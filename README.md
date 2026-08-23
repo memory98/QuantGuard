@@ -21,7 +21,7 @@
 | `../quant-web/` | 종이봇 **웹 통제판**(Flask, localhost). 별도 git 레포 | — |
 
 ## 🕒 무엇이 언제 도나
-- **매주 월 15:05/15:15 KST** — Lambda A/B 정기 리밸런싱(EventBridge). ⚠️ 14:00/14:20 권장.
+- **매주 월 14:00/14:20 KST** — Lambda A/B 정기 리밸런싱(EventBridge).
 - **매주 월 16:00 KST** — GitHub Actions가 섀도우 전진검증 실행 → `shadow_ledger.json` 커밋 + 텔레그램.
 - **rambdaA/B push 시** — CI가 `tests/` 통과해야만 배포(deploy.yml). 실행버그 배포 차단.
 
