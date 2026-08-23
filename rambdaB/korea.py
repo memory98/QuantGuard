@@ -33,9 +33,12 @@ from config import (
     SELL_SETTLE_WAIT_SECS,
     SELL_SETTLE_POLL_INTERVAL,
     PRICE_CALL_SLEEP,
+    EXEC_AUDIT_POLL_SECS,
 )
 # [fix23] 공통 함수 통합 — get_tick_size/calc_limit_price/execute_order 중복 제거(단일 소스)
 from kis_common import get_tick_size, calc_limit_price, execute_order  # noqa: F401
+# [fix33] 체결 관측(#OPEN-1). 읽기 전용이며 매매 판단에 관여하지 않는다.
+from execution_audit import run_execution_audit
 
 BULL_LIMIT_RATE     = 0.01
 SIGNAL_MAX_AGE_SECS = 3600
@@ -93,6 +96,30 @@ def check_market_open(token: str) -> bool:
     return True
 
 
+def balance_request_spec(token: str) -> tuple:
+    """잔고조회(TTTC8434R) 요청 스펙 단일 소스 → (url, headers).
+
+    [fix17] 쿼리 파라미터 공식 규격 정리 — 기존 AFHR_FLG/OVR_FLG는 규격에 없는
+    이름이었고 필수 파라미터가 다수 누락돼 있었다.
+    [fix33] fetch_present_holdings 안에 인라인돼 있던 것을 밖으로 뺐다. 체결감사
+    모듈이 같은 요청을 써야 하는데, 거기서 URL/헤더를 다시 만들면 fix23이 없앤
+    '중복 정의 → 수동 동기화 누락' 버그 클래스가 그대로 되살아난다.
+    """
+    url = (f"{URL_BASE}/uapi/domestic-stock/v1/trading/inquire-balance"
+           f"?CANO={KIS_ACCOUNT}&ACNT_PRDT_CD={KIS_PRDT_CODE}"
+           "&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=02&UNPR_DVSN=01"
+           "&FUND_STTL_ICLD_YN=N&FNCG_AMT_AUTO_RDPT_YN=N&PRCS_DVSN=00"
+           "&CTX_AREA_FK100=&CTX_AREA_NK100=")
+    headers = {
+        "content-type":  "application/json",
+        "authorization": f"Bearer {token}",
+        "appkey":        KIS_APPKEY,
+        "appsecret":     KIS_APPSECRET,
+        "tr_id":         "TTTC8434R",
+    }
+    return url, headers
+
+
 def fetch_present_holdings(token: str, max_retries: int = 3) -> tuple:
     """보유 종목 + 계좌 총평가금액 동시 반환 (TTTC8434R 1회 호출로 두 값 확보)
 
@@ -106,20 +133,7 @@ def fetch_present_holdings(token: str, max_retries: int = 3) -> tuple:
       (총자산 0원 오인 → 매매 전체 스킵 사고 방지)
     """
     http = urllib3.PoolManager()
-    # [fix17] 쿼리 파라미터 공식 규격(TTTC8434R) 정리
-    # 기존 AFHR_FLG/OVR_FLG는 규격에 없는 이름, 필수 파라미터 다수 누락 상태였음
-    url  = (f"{URL_BASE}/uapi/domestic-stock/v1/trading/inquire-balance"
-            f"?CANO={KIS_ACCOUNT}&ACNT_PRDT_CD={KIS_PRDT_CODE}"
-            "&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=02&UNPR_DVSN=01"
-            "&FUND_STTL_ICLD_YN=N&FNCG_AMT_AUTO_RDPT_YN=N&PRCS_DVSN=00"
-            "&CTX_AREA_FK100=&CTX_AREA_NK100=")
-    headers = {
-        "content-type":  "application/json",
-        "authorization": f"Bearer {token}",
-        "appkey":        KIS_APPKEY,
-        "appsecret":     KIS_APPSECRET,
-        "tr_id":         "TTTC8434R",
-    }
+    url, headers = balance_request_spec(token)
     last_error = ""
     for attempt in range(1, max_retries + 1):
         try:
@@ -415,6 +429,11 @@ def run_korea_rebalancing(token: str, fallback_total_equity: int = 0) -> dict:
             "executed_orders": executed_orders,
             "failed_sells":    failed_sells,
             "name_map":        name_map,
+            # [fix33] 접수(ok)와 체결을 분리 관측. 실패해도 매매 결과에 영향 없음.
+            "execution_audit": run_execution_audit(
+                token, lambda: balance_request_spec(token),
+                current_holdings, executed_orders,
+                poll_interval=EXEC_AUDIT_POLL_SECS),
         }
 
     if not target_stocks:
@@ -626,4 +645,9 @@ def run_korea_rebalancing(token: str, fallback_total_equity: int = 0) -> dict:
         "sell_settled":           settled,
         "name_map":               name_map,
         "targets":                targets,
+        # [fix33] 접수(ok)와 체결을 분리 관측. 실패해도 매매 결과에 영향 없음.
+        "execution_audit":        run_execution_audit(
+            token, lambda: balance_request_spec(token),
+            current_holdings, executed_orders,
+            poll_interval=EXEC_AUDIT_POLL_SECS),
     }

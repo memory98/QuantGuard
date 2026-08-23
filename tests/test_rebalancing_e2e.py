@@ -66,6 +66,9 @@ class Harness:
                                side_effect=lambda tok, code: self.price_map.get(code, 0)), \
              mock.patch.object(korea, "wait_sell_settlement", return_value=True), \
              mock.patch.object(korea, "execute_order", side_effect=self._exec), \
+             mock.patch.object(korea, "run_execution_audit",
+                               return_value={"ok": True, "reason": "PATCHED_IN_TEST",
+                                             "orders": []}), \
              mock.patch.object(korea.time, "sleep", lambda *_: None):
             m_boto.client.return_value = s3
             return korea.run_korea_rebalancing("tok", fallback_total_equity=self.total_asset)

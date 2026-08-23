@@ -33,6 +33,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "strategies"))
 sys.path.insert(0, str(ROOT / "rambdaA"))
+sys.path.insert(0, str(ROOT / "backtest"))
 
 import pandas as pd  # noqa: E402
 import yf            # noqa: E402
@@ -41,6 +42,8 @@ from aggressive import ConcentratedMomentum   # noqa: E402
 from vol_tilted import VolTiltedConcentrated   # noqa: E402
 from signal_generator import (                # noqa: E402
     DD_GUARD_TICKER, DD_GUARD_LOOKBACK, DD_GUARD_THRESHOLD)
+from guards import (                          # noqa: E402
+    DDGuard, ComboGuard, SigmaDDGuard, DailyCircuitBreaker)
 
 UNIVERSE_DIR = ROOT / "data" / "s3_archive" / "universe"
 QUANT_DIR = ROOT / "data" / "s3_archive" / "quant_signals"
@@ -115,25 +118,16 @@ class PriceProvider:
         return self._s.get(DD_GUARD_TICKER)
 
 
-def recompute_market(prices: PriceProvider, date, use_sma: bool) -> dict:
+def recompute_market(prices: PriceProvider, date, guard) -> dict:
     """가드를 가격에서 균일 재계산(배포 이력 착시 제거).
 
-    - use_sma=False → 현행 DD가드(-8%/20일)만
-    - use_sma=True  → 콤보: DD OR SMA120 이탈
     스냅샷 저장 market_status를 쓰지 않고 모든 섀도우 전략을 동일 기준으로 채점한다.
     (실제 프로덕션이 그때 무엇을 했는지는 별도 '실계좌' 행이 담는다.)
+
+    [2026-08-23] `use_sma: bool` → 가드 객체(backtest/guards.py). 후보가 늘어날 때
+    불리언 조합이 폭발하는 것을 막고, 각 후보의 사전고정 파라미터를 원장에 박는다.
     """
-    kd = prices.kodex()
-    status = "BULL"
-    if kd is not None:
-        s = kd[kd.index <= pd.Timestamp(date)].dropna()
-        if len(s) >= DD_GUARD_LOOKBACK:
-            dd = float(s.iloc[-1] / s.tail(DD_GUARD_LOOKBACK).max() - 1)
-            if dd <= DD_GUARD_THRESHOLD:
-                status = "BEAR"
-        if use_sma and len(s) >= SMA_WINDOW and float(s.iloc[-1]) < float(s.tail(SMA_WINDOW).mean()):
-            status = "BEAR"
-    return {"market_status": status}
+    return {"market_status": guard.status(prices, date)}
 
 
 class AccountReader:
@@ -178,11 +172,17 @@ class AccountReader:
         return None
 
 
-def portfolio_return(strat, universe, market, prices, d0, d1, prev_hold):
+def portfolio_return(strat, universe, market, prices, d0, d1, prev_hold, exit_date=None):
+    """구간 수익률(비용 차감). exit_date가 있으면 그날 전량 청산 후 구간 끝까지 현금.
+
+    exit_date=None이면 기존 동작과 완전히 동일하다(일간 차단기 후보를 넣으면서도
+    기존 후보들의 과거 성적이 한 자리도 바뀌면 안 되므로 이 등가성이 중요하다).
+    """
     pf = strat.build_portfolio(universe, market)
+    d_end = exit_date or d1
     per_r, usable = {}, {}
     for c, w in pf["weights"].items():
-        p0, p1 = prices.at(c, d0), prices.at(c, d1)
+        p0, p1 = prices.at(c, d0), prices.at(c, d_end)
         if p0 and p1 and p0 > 0:
             per_r[c] = p1 / p0 - 1
             usable[c] = w
@@ -191,10 +191,19 @@ def portfolio_return(strat, universe, market, prices, d0, d1, prev_hold):
         usable = {c: w / wsum for c, w in usable.items()}
     gross = sum(usable[c] * per_r[c] for c in usable) if usable else 0.0
     turn = sum(abs(usable.get(c, 0) - prev_hold.get(c, 0)) for c in set(usable) | set(prev_hold))
+    exited = bool(exit_date) and bool(usable)
+    if exited:
+        # 비상 청산: 보유 전량을 구간 중간에 팔았으므로 매도 회전이 한 번 더 발생한다.
+        turn += sum(usable.values())
     net = gross - turn * COST_PER_SIDE
-    drift = ({c: usable[c] * (1 + per_r[c]) / (1 + gross) for c in usable}
-             if usable and (1 + gross) != 0 else {})
-    return net, pf["cash"], drift
+    if exited:
+        # 청산 후 구간 끝까지 현금 → 다음 구간 시작 보유는 없음
+        drift, cash_flag = {}, 1.0
+    else:
+        drift = ({c: usable[c] * (1 + per_r[c]) / (1 + gross) for c in usable}
+                 if usable and (1 + gross) != 0 else {})
+        cash_flag = pf["cash"]
+    return net, cash_flag, drift, exited
 
 
 def main():
@@ -210,12 +219,16 @@ def main():
     prices = PriceProvider().load(codes)
     account = AccountReader().load()
 
-    # 섀도우 전략: (표시명, 전략객체, use_sma) — 가드는 모두 가격에서 균일 재계산
+    # 섀도우 전략: (표시명, 전략객체, 가드객체) — 가드는 모두 가격에서 균일 재계산
+    # [2026-08-23 추가] 아래 두 후보는 2026-08 재진입 국면 관측용. 임계는 사전고정이며
+    # 사후에 바꾸지 않는다(근거는 backtest/guards.py 주석). 프로덕션 무반영.
     specs = [
-        ("baseline(DD가드)", BaselineMomentum126(), False),
-        ("concentrated(DD가드)", ConcentratedMomentum(), False),
-        ("voltilt(DD가드)", VolTiltedConcentrated(), False),   # 재설계 공격형(리스크조정 선별+집중)
-        ("baseline+콤보가드", BaselineMomentum126(), True),
+        ("baseline(DD가드)", BaselineMomentum126(), DDGuard()),
+        ("concentrated(DD가드)", ConcentratedMomentum(), DDGuard()),
+        ("voltilt(DD가드)", VolTiltedConcentrated(), DDGuard()),   # 재설계 공격형(리스크조정 선별+집중)
+        ("baseline+콤보가드", BaselineMomentum126(), ComboGuard()),
+        ("baseline+σ임계가드", BaselineMomentum126(), SigmaDDGuard()),
+        ("baseline+일간비상", BaselineMomentum126(), DailyCircuitBreaker()),
     ]
     ledgers = {name: {"cum": 1.0, "prev": {}, "intervals": []} for name, _, _ in specs}
     bench_cum = 1.0
@@ -230,14 +243,20 @@ def main():
         # 변동성조정 전략용: 유니버스에 vol 필드 주입(다른 전략은 무시)
         uni = [{**s, "vol": prices.volatility(s["code"], d0)} for s in a["universe"]]
 
-        for name, strat, use_sma in specs:
-            market = recompute_market(prices, d0, use_sma)
-            net, cash, drift = portfolio_return(strat, uni, market, prices,
-                                                d0, d1, ledgers[name]["prev"])
+        for name, strat, guard in specs:
+            market = recompute_market(prices, d0, guard)
+            # 주간 판정이 BULL일 때만 구간 중 비상 청산을 볼 의미가 있다(BEAR면 이미 현금).
+            exit_date = (guard.intra_exit(prices, d0, d1)
+                         if market["market_status"] == "BULL" else None)
+            net, cash, drift, exited = portfolio_return(
+                strat, uni, market, prices, d0, d1, ledgers[name]["prev"], exit_date)
             ledgers[name]["cum"] *= (1 + net)
             ledgers[name]["prev"] = drift
-            ledgers[name]["intervals"].append({**row, "net_pct": round(net * 100, 2),
-                                               "cash": cash})
+            entry = {**row, "net_pct": round(net * 100, 2), "cash": cash}
+            if exited:
+                entry["intra_exit"] = exit_date.strftime("%Y-%m-%d")
+                print(f"   ⚡ [{name}] {entry['intra_exit']} 비상 청산 발동")
+            ledgers[name]["intervals"].append(entry)
             row[name] = round(net * 100, 2)
 
         # 벤치마크 KODEX200
@@ -284,6 +303,8 @@ def main():
         "source": src,
         "intervals": rows,
         "cumulative": {n: round((ledgers[n]["cum"] - 1) * 100, 2) for n in names},
+        # 후보별 가드 파라미터를 매번 원장에 박는다. 사후에 조용히 바뀌면 원장 비교로 드러난다.
+        "guard_specs": {n: g.describe() for n, _, g in specs},
         "benchmark_pct": round((bench_cum - 1) * 100, 2),
         "account_pct": account_pct,          # None = 채점 가능한 구간 없음(0%와 구분)
         "account_intervals": acc_intervals,

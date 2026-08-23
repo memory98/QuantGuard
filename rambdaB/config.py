@@ -24,6 +24,12 @@ SELL_SETTLE_WAIT_SECS     = 30      # 매도 체결 확인 polling 최대 대기
 SELL_SETTLE_POLL_INTERVAL = 5       # polling 간격(초) — KIS 유량제한 고려
 PRICE_CALL_SLEEP          = 0.2     # 시세조회 연속 호출 간격(초) — EGW00201 방지
 
+# ── [fix33] 체결 관측(#OPEN-1) ───────────────────────────────
+# 주문 집행 후 잔고를 다시 읽어 '접수'와 '실제 체결'을 분리 기록하기까지의 대기(초).
+# 읽기 전용 관측이며 실패해도 매매 결과에 영향 없음. 값을 키우면 체결 반영을 더
+# 확실히 잡지만 Lambda 실행시간을 그만큼 잠식한다.
+EXEC_AUDIT_POLL_SECS      = 5
+
 # ── 현금 예치금 방화벽 ───────────────────────────────────────
 # 봇이 절대 건드리지 않는 격리 현금액 (단위: 원), 기본값 0 = 전액 운용
 CASH_RESERVE = int(os.environ.get("CASH_RESERVE", "0"))
