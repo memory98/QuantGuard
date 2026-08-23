@@ -37,7 +37,12 @@ jobs:
         with:
           python-version: '3.12'
       - name: 의존성 설치
-        run: pip install urllib3 boto3
+        # pandas 필수 — rambdaA(fdr.py/yf.py)와 backtest/strategies가 의존한다.
+        # 2026-08-03 fix24/25/26이 pandas 의존 테스트를 추가했는데 이 줄은 boto3까지만
+        # 늘어난 상태였다. 그 결과 test 잡이 ImportError로 실패해왔고, deploy 잡은
+        # `needs: test`라 **그 이후 rambdaA/B 변경이 배포되지 않았을 수 있다.**
+        # (2026-08-24 CI 환경 재현으로 확인: 이 줄에 pandas가 없으면 5개 모듈 ImportError)
+        run: pip install urllib3 boto3 pandas
       - name: 실행경로 단위테스트 (통과해야 배포)
         run: python -m unittest discover -s tests -v
 
