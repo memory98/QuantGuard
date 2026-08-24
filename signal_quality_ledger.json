@@ -16,15 +16,53 @@
         15.808
       ],
       "n": 85,
-      "proxy_corr": 0.9712,
-      "proxy_beta": 1.1128
+      "proxy_corr": 0.9726,
+      "proxy_beta": 1.0715
+    },
+    {
+      "from": "2026-08-10",
+      "to": "2026-08-18",
+      "market_status": "BEAR",
+      "ic": 0.7807,
+      "top10_pct": 10.287,
+      "uni_pct": 3.038,
+      "spread_pct": 7.249,
+      "quintiles_pct": [
+        10.129,
+        7.764,
+        3.446,
+        -1.746,
+        -4.41
+      ],
+      "n": 83,
+      "proxy_corr": 0.9665,
+      "proxy_beta": 1.0311
+    },
+    {
+      "from": "2026-08-18",
+      "to": "2026-08-24",
+      "market_status": "BULL",
+      "ic": -0.1527,
+      "top10_pct": -4.448,
+      "uni_pct": -2.657,
+      "spread_pct": -1.79,
+      "quintiles_pct": [
+        -3.982,
+        -1.485,
+        -3.933,
+        -2.133,
+        -1.823
+      ],
+      "n": 89,
+      "proxy_corr": 0.9679,
+      "proxy_beta": 1.0954
     }
   ],
-  "updated_at": "2026-08-17 07:55:51",
+  "updated_at": "2026-08-24 08:00:33",
   "verdict": {
     "status": "INSUFFICIENT",
-    "weeks": 1,
-    "need": 25,
+    "weeks": 3,
+    "need": 23,
     "note": "판정 보류 — 26주 누적 전엔 경향만 본다"
   },
   "criteria": {

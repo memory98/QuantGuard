@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-17 07:55:44",
+  "generated_at": "2026-08-24 08:00:24",
   "source": "universe",
   "intervals": [
     {
@@ -9,18 +9,88 @@
       "concentrated(DD가드)": 0.0,
       "voltilt(DD가드)": 0.0,
       "baseline+콤보가드": 0.0,
+      "baseline+σ임계가드": 0.0,
+      "baseline+일간비상": 0.0,
       "benchmark": -0.85,
       "account": 0.0
+    },
+    {
+      "from": "2026-08-10",
+      "to": "2026-08-18",
+      "baseline(DD가드)": 0.0,
+      "concentrated(DD가드)": 0.0,
+      "voltilt(DD가드)": 0.0,
+      "baseline+콤보가드": 0.0,
+      "baseline+σ임계가드": 7.01,
+      "baseline+일간비상": 0.0,
+      "benchmark": 10.47,
+      "account": 0.0
+    },
+    {
+      "from": "2026-08-18",
+      "to": "2026-08-24",
+      "baseline(DD가드)": -3.1,
+      "concentrated(DD가드)": -4.6,
+      "voltilt(DD가드)": -5.45,
+      "baseline+콤보가드": -3.1,
+      "baseline+σ임계가드": -3.07,
+      "baseline+일간비상": -3.1,
+      "benchmark": -2.35,
+      "account": -3.5
     }
   ],
   "cumulative": {
-    "baseline(DD가드)": 0.0,
-    "concentrated(DD가드)": 0.0,
-    "voltilt(DD가드)": 0.0,
-    "baseline+콤보가드": 0.0
+    "baseline(DD가드)": -3.1,
+    "concentrated(DD가드)": -4.6,
+    "voltilt(DD가드)": -5.45,
+    "baseline+콤보가드": -3.1,
+    "baseline+σ임계가드": 3.72,
+    "baseline+일간비상": -3.1
   },
-  "benchmark_pct": -0.85,
-  "account_pct": 0.0,
-  "account_intervals": 1,
+  "guard_specs": {
+    "baseline(DD가드)": {
+      "name": "DD가드",
+      "threshold_pct": -8.0,
+      "lookback": 20
+    },
+    "concentrated(DD가드)": {
+      "name": "DD가드",
+      "threshold_pct": -8.0,
+      "lookback": 20
+    },
+    "voltilt(DD가드)": {
+      "name": "DD가드",
+      "threshold_pct": -8.0,
+      "lookback": 20
+    },
+    "baseline+콤보가드": {
+      "name": "콤보가드",
+      "threshold_pct": -8.0,
+      "lookback": 20,
+      "sma_window": 120
+    },
+    "baseline+σ임계가드": {
+      "name": "σ임계가드",
+      "k": 0.6343,
+      "formula": "threshold = -K * sigma20 * sqrt(20)",
+      "k_derivation": "|-0.08| / (0.0282 * sqrt(20))",
+      "normal_sigma": 0.0282,
+      "vol_window": 20
+    },
+    "baseline+일간비상": {
+      "name": "일간비상차단기",
+      "base": {
+        "name": "DD가드",
+        "threshold_pct": -8.0,
+        "lookback": 20
+      },
+      "emergency_threshold_pct": -16.0,
+      "emergency_mult": 2.0,
+      "reentry": "다음 주간 리밸런싱까지 현금 유지(비대칭)"
+    }
+  },
+  "benchmark_pct": 6.95,
+  "account_pct": -3.5,
+  "account_intervals": 3,
   "note": "폴백(top_10) 구간은 백테스트 부트스트랩. 진짜 전진 OOS는 universe 스냅샷 누적(2026-08-03~)부터."
 }
