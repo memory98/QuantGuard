@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-24 08:00:24",
+  "generated_at": "2026-08-26 12:40:39",
   "source": "universe",
   "intervals": [
     {
@@ -11,6 +11,7 @@
       "baseline+콤보가드": 0.0,
       "baseline+σ임계가드": 0.0,
       "baseline+일간비상": 0.0,
+      "baseline+σ재보정": 4.05,
       "benchmark": -0.85,
       "account": 0.0
     },
@@ -23,6 +24,7 @@
       "baseline+콤보가드": 0.0,
       "baseline+σ임계가드": 7.01,
       "baseline+일간비상": 0.0,
+      "baseline+σ재보정": 7.04,
       "benchmark": 10.47,
       "account": 0.0
     },
@@ -35,6 +37,7 @@
       "baseline+콤보가드": -3.1,
       "baseline+σ임계가드": -3.07,
       "baseline+일간비상": -3.1,
+      "baseline+σ재보정": -3.07,
       "benchmark": -2.35,
       "account": -3.5
     }
@@ -45,7 +48,8 @@
     "voltilt(DD가드)": -5.45,
     "baseline+콤보가드": -3.1,
     "baseline+σ임계가드": 3.72,
-    "baseline+일간비상": -3.1
+    "baseline+일간비상": -3.1,
+    "baseline+σ재보정": 7.96
   },
   "guard_specs": {
     "baseline(DD가드)": {
@@ -67,13 +71,27 @@
       "name": "콤보가드",
       "threshold_pct": -8.0,
       "lookback": 20,
-      "sma_window": 120
+      "sma_window": 120,
+      "op": "ANY_OF",
+      "members": [
+        {
+          "name": "DD가드",
+          "threshold_pct": -8.0,
+          "lookback": 20
+        },
+        {
+          "name": "SMA이탈",
+          "sma_window": 120
+        }
+      ]
     },
     "baseline+σ임계가드": {
       "name": "σ임계가드",
       "k": 0.6343,
       "formula": "threshold = -K * sigma20 * sqrt(20)",
       "k_derivation": "|-0.08| / (0.0282 * sqrt(20))",
+      "k_caveat": "NORMAL_SIGMA는 250일 창 추정, 런타임 σ는 20일 롤링 — 추정량 불일치",
+      "k_variant": "original(250일 창 std 기준)",
       "normal_sigma": 0.0282,
       "vol_window": 20
     },
@@ -87,7 +105,23 @@
       "emergency_threshold_pct": -16.0,
       "emergency_mult": 2.0,
       "reentry": "다음 주간 리밸런싱까지 현금 유지(비대칭)"
+    },
+    "baseline+σ재보정": {
+      "name": "σ임계가드",
+      "k": 1.0264,
+      "formula": "threshold = -K * sigma20 * sqrt(20)",
+      "k_derivation": "|-0.08| / (0.0282 * sqrt(20))",
+      "k_caveat": "NORMAL_SIGMA는 250일 창 추정, 런타임 σ는 20일 롤링 — 추정량 불일치",
+      "k_variant": "recalibrated(20일 롤링 중앙값 기준)",
+      "normal_sigma": 0.0282,
+      "vol_window": 20
     }
+  },
+  "cost_model": {
+    "entry_pct": 0.2,
+    "exit_pct": 0.2,
+    "round_trip_pct": 0.4,
+    "symmetric": true
   },
   "benchmark_pct": 6.95,
   "account_pct": -3.5,
