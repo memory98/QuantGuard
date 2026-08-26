@@ -43,7 +43,7 @@ from vol_tilted import VolTiltedConcentrated   # noqa: E402
 from signal_generator import (                # noqa: E402
     DD_GUARD_TICKER, DD_GUARD_LOOKBACK, DD_GUARD_THRESHOLD)
 from guards import (                          # noqa: E402
-    DDGuard, ComboGuard, SigmaDDGuard, DailyCircuitBreaker, K_SIGMA_RECAL)
+    DDGuard, ComboGuard, SigmaDDGuard, DailyCircuitBreaker, K_SIGMA_RECAL, MarketGuard)
 
 UNIVERSE_DIR = ROOT / "data" / "s3_archive" / "universe"
 QUANT_DIR = ROOT / "data" / "s3_archive" / "quant_signals"
@@ -211,6 +211,22 @@ def portfolio_return(strat, universe, market, prices, d0, d1, prev_hold, exit_da
     return net, cash_flag, drift, exited
 
 
+def interval_dd_min(prices, d0, d1):
+    """구간 (d0, d1] 중 KODEX200 20일 낙폭의 **최저치**(가장 음수). 표본 부족이면 None.
+
+    AUDIT ③ STEP D의 폭락 사건 정의(-16% 진입 / -8% 회복)를 나중에 자동 판정하려면
+    BEAR가 아닌 구간의 낙폭도 필요하다. guard_reasons는 BEAR일 때만 남으므로 별도로 센다.
+    """
+    kd = prices.kodex()
+    if kd is None:
+        return None
+    s = kd.dropna()
+    window = s[(s.index > pd.Timestamp(d0)) & (s.index <= pd.Timestamp(d1))]
+    vals = [dd for ts in window.index
+            if (dd := MarketGuard._drawdown(s[s.index <= ts])) is not None]
+    return round(min(vals), 6) if vals else None
+
+
 # 원장에 저장될 필드 계약. **여기에 없는 곳에 기록하면 파일에 안 남는다.**
 # (2026-08-26 사고: guard_reason을 ledgers[name]["intervals"]에만 넣었는데 그 구조는
 #  저장되지 않아, "원장에 대피 사유가 남는다"는 주장이 실제로는 거짓이었다.)
@@ -272,6 +288,9 @@ def main():
         d0, d1 = a["date"], b["date"]
         row = {"from": d0.strftime("%Y-%m-%d"), "to": d1.strftime("%Y-%m-%d")}
         span = f"{row['from']}→{row['to']}"
+        # AUDIT ③ STEP D: 폭락 사건(-16% 진입) 판정에 쓸 구간별 낙폭 최저치.
+        # 관측 전용 — 어떤 후보의 수익률에도 관여하지 않는다.
+        row["dd_min"] = interval_dd_min(prices, d0, d1)
         # 변동성조정 전략용: 유니버스에 vol 필드 주입(다른 전략은 무시)
         uni = [{**s, "vol": prices.volatility(s["code"], d0)} for s in a["universe"]]
 

@@ -347,6 +347,38 @@ class TestLedgerContract(unittest.TestCase):
         self.assertEqual(self._build({})["cost_model"]["round_trip_pct"], 0.4)
 
 
+class TestIntervalDrawdown(unittest.TestCase):
+    """AUDIT ③ STEP D의 폭락 사건 판정에 쓸 구간별 낙폭 최저치.
+
+    guard_reasons는 BEAR 구간에만 남으므로, 사건(-16% 진입)을 세려면 별도 기록이 필요하다.
+    """
+
+    def _prices(self, series):
+        class P:
+            def kodex(self_inner):
+                return series
+        return P()
+
+    def test_records_the_worst_drawdown_in_the_window(self):
+        from shadow_forward import interval_dd_min
+        s = flat_then([100.0] * 3 + [70.0, 90.0])   # 구간 중 -30% 찍고 반등
+        dd = interval_dd_min(self._prices(s), s.index[-5], s.index[-1])
+        self.assertIsNotNone(dd)
+        # 최저치를 잡아야 한다 — 구간 끝값(-10%)이 아니라 바닥(-30%)
+        self.assertLess(dd, -0.25)
+
+    def test_returns_none_when_sample_insufficient(self):
+        from shadow_forward import interval_dd_min
+        s = pd.Series([100.0, 99.0], index=pd.bdate_range("2026-01-01", periods=2))
+        self.assertIsNone(interval_dd_min(self._prices(s), s.index[0], s.index[-1]))
+
+    def test_window_is_left_exclusive(self):
+        """(d0, d1] — 리밸런싱일 자체는 직전 구간에서 이미 셌다."""
+        from shadow_forward import interval_dd_min
+        s = flat_then([100.0] * 4)
+        self.assertIsNone(interval_dd_min(self._prices(s), s.index[-1], s.index[-1]))
+
+
 class TestCostModel(unittest.TestCase):
     """비용 단일 소스 도입이 기존 수치를 바꾸지 않는가."""
 
