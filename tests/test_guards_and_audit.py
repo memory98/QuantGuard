@@ -308,6 +308,45 @@ class TestCombinators(unittest.TestCase):
             AnyOf([])
 
 
+class TestLedgerContract(unittest.TestCase):
+    """기록한 것이 **실제로 파일에 저장되는가**.
+
+    2026-08-26 사고: guard_reason을 `ledgers[name]["intervals"]`에만 넣었는데
+    그 구조는 저장 대상이 아니어서, "원장에 대피 사유가 남는다"는 주장이 거짓이었다.
+    메커니즘(evaluate가 근거를 반환하는가)만 테스트하고 **저장 경로**를 안 봐서 놓쳤다.
+    """
+
+    def _build(self, guard_reasons):
+        from shadow_forward import build_ledger
+        g = DDGuard()
+        return build_ledger(
+            src="universe",
+            rows=[{"from": "2026-08-03", "to": "2026-08-10", "후보A": 0.0}],
+            names=["후보A"],
+            ledgers={"후보A": {"cum": 1.0}},
+            specs=[("후보A", None, g)],
+            guard_reasons=guard_reasons,
+        )
+
+    def test_saved_ledger_has_all_promised_keys(self):
+        from shadow_forward import LEDGER_REQUIRED_KEYS
+        led = self._build({})
+        for k in LEDGER_REQUIRED_KEYS:
+            self.assertIn(k, led, f"원장 계약 필드 누락: {k}")
+
+    def test_guard_reason_actually_reaches_the_saved_ledger(self):
+        """근거를 넣으면 저장 본문에서 되읽을 수 있어야 한다(이번 사고의 회귀 방지)."""
+        reason = {"rule": "DD가드", "dd": -0.12, "threshold": -0.08, "fired": True}
+        led = self._build({"2026-08-03→2026-08-10": {"후보A": reason}})
+        got = led["guard_reasons"]["2026-08-03→2026-08-10"]["후보A"]
+        self.assertEqual(got["rule"], "DD가드")
+        self.assertAlmostEqual(got["dd"], -0.12)
+        self.assertTrue(got["fired"])
+
+    def test_ledger_records_cost_model(self):
+        self.assertEqual(self._build({})["cost_model"]["round_trip_pct"], 0.4)
+
+
 class TestCostModel(unittest.TestCase):
     """비용 단일 소스 도입이 기존 수치를 바꾸지 않는가."""
 

@@ -211,6 +211,28 @@ def portfolio_return(strat, universe, market, prices, d0, d1, prev_hold, exit_da
     return net, cash_flag, drift, exited
 
 
+# 원장에 저장될 필드 계약. **여기에 없는 곳에 기록하면 파일에 안 남는다.**
+# (2026-08-26 사고: guard_reason을 ledgers[name]["intervals"]에만 넣었는데 그 구조는
+#  저장되지 않아, "원장에 대피 사유가 남는다"는 주장이 실제로는 거짓이었다.)
+LEDGER_REQUIRED_KEYS = ("generated_at", "source", "intervals", "cumulative",
+                        "guard_specs", "cost_model", "guard_reasons")
+
+
+def build_ledger(src, rows, names, ledgers, specs, guard_reasons) -> dict:
+    """저장될 원장의 본문을 조립한다(파일 I/O 없음 — 계약 테스트를 위해 분리)."""
+    return {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "source": src,
+        "intervals": rows,
+        "cumulative": {n: round((ledgers[n]["cum"] - 1) * 100, 2) for n in names},
+        # 후보별 가드 파라미터를 매번 원장에 박는다. 사후에 조용히 바뀌면 원장 비교로 드러난다.
+        "guard_specs": {n: g.describe() for n, _, g in specs},
+        "cost_model": COST.describe(),
+        # 대피/청산 사유. 없으면 "이 후보가 왜 졌나"를 물을 때마다 과거를 재생해야 한다.
+        "guard_reasons": guard_reasons,
+    }
+
+
 def main():
     points, src = SnapshotStore().load()
     print(f"📂 스냅샷 소스: {src} — {len(points)}개 "
@@ -243,10 +265,13 @@ def main():
     acc_intervals = 0        # 실계좌가 실제로 채점된 구간 수(0이면 누적은 '없음'이지 0%가 아니다)
     rows = []
 
+    guard_reasons: dict[str, dict] = {}   # "from→to" → {후보: 대피 근거}. 원장에 저장된다.
+
     for i in range(len(points) - 1):
         a, b = points[i], points[i + 1]
         d0, d1 = a["date"], b["date"]
         row = {"from": d0.strftime("%Y-%m-%d"), "to": d1.strftime("%Y-%m-%d")}
+        span = f"{row['from']}→{row['to']}"
         # 변동성조정 전략용: 유니버스에 vol 필드 주입(다른 전략은 무시)
         uni = [{**s, "vol": prices.volatility(s["code"], d0)} for s in a["universe"]]
 
@@ -262,9 +287,13 @@ def main():
             entry = {**row, "net_pct": round(net * 100, 2), "cash": cash}
             if market["market_status"] == "BEAR":
                 # 왜 대피했는지를 원장에 남긴다 — 없으면 매번 과거를 재생해야 한다.
+                # entry(=ledgers[name])는 저장되지 않으므로 guard_reasons에도 반드시 넣는다.
                 entry["guard_reason"] = market["guard_reason"]
+                guard_reasons.setdefault(span, {})[name] = market["guard_reason"]
             if exited:
                 entry["intra_exit"] = exit_date.strftime("%Y-%m-%d")
+                guard_reasons.setdefault(span, {})[f"{name}::intra_exit"] = \
+                    exit_date.strftime("%Y-%m-%d")
                 print(f"   ⚡ [{name}] {entry['intra_exit']} 비상 청산 발동")
             ledgers[name]["intervals"].append(entry)
             row[name] = round(net * 100, 2)
@@ -309,13 +338,7 @@ def main():
 
     # ── 원장 저장 ──
     ledger = {
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "source": src,
-        "intervals": rows,
-        "cumulative": {n: round((ledgers[n]["cum"] - 1) * 100, 2) for n in names},
-        # 후보별 가드 파라미터를 매번 원장에 박는다. 사후에 조용히 바뀌면 원장 비교로 드러난다.
-        "guard_specs": {n: g.describe() for n, _, g in specs},
-        "cost_model": COST.describe(),
+        **build_ledger(src, rows, names, ledgers, specs, guard_reasons),
         "benchmark_pct": round((bench_cum - 1) * 100, 2),
         "account_pct": account_pct,          # None = 채점 가능한 구간 없음(0%와 구분)
         "account_intervals": acc_intervals,
