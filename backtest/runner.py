@@ -39,7 +39,9 @@ from baseline import BaselineMomentum126        # noqa: E402
 from aggressive import ConcentratedMomentum     # noqa: E402
 
 DEFAULT_ARCHIVE = ROOT / "data" / "s3_archive" / "quant_signals"
-COST_PER_SIDE_DEFAULT = 0.002  # side당 0.2% → 왕복 0.4% (현행 백테스트 가정과 정합)
+from costs import DEFAULT_COST  # noqa: E402
+
+COST_PER_SIDE_DEFAULT = DEFAULT_COST.entry  # 단일 소스(backtest/costs.py)
 
 
 class SignalSeries:

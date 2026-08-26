@@ -33,6 +33,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "strategies"))
 sys.path.insert(0, str(ROOT / "rambdaA"))
+sys.path.insert(0, str(ROOT / "backtest"))
 
 import pandas as pd  # noqa: E402
 import fdr           # noqa: E402
@@ -48,6 +49,7 @@ from fast import FastMomentum63               # noqa: E402
 from leverage import LeverageMomentum2X       # noqa: E402
 from vol_adjusted import VolAdjustedMomentum   # noqa: E402
 from vol_tilted import VolTiltedConcentrated    # noqa: E402
+from costs import DEFAULT_COST                 # noqa: E402  — 비용 가정 단일 소스
 
 # 레버리지 유니버스 구성용 키워드
 _LEV_INCLUDE = ["레버리지", "2X"]
@@ -195,12 +197,13 @@ class LongBacktest:
     """주간 리밸런싱 replay → 전략별 자산곡선 + 지표. 전략별 유니버스/룩백 존중."""
 
     def __init__(self, universes: dict, prices: PriceMatrix, guard: GuardSimulator,
-                 strategies: list, cost_per_side: float = 0.002):
+                 strategies: list, cost_per_side: float = None):
         self.universes = universes  # {"normal": df, "leverage": df}
         self.p = prices
         self.guard = guard
         self.strategies = strategies
-        self.cost = cost_per_side
+        # None이면 단일 소스(backtest/costs.py) 기본값
+        self.cost = DEFAULT_COST.entry if cost_per_side is None else cost_per_side
         self.name_maps = {tag: dict(zip(df["Code"], df["Name"]))
                           for tag, df in universes.items()}
         self._cache = {}
@@ -326,7 +329,7 @@ def _build_data(top):
 def main():
     ap = argparse.ArgumentParser(description="장기 백테스트 (production 로직 재시뮬)")
     ap.add_argument("--top", type=int, default=80, help="거래대금 상위 N ETF 유니버스")
-    ap.add_argument("--cost-per-side", type=float, default=0.002)
+    ap.add_argument("--cost-per-side", type=float, default=DEFAULT_COST.entry)
     ap.add_argument("--sweep", action="store_true",
                     help="DD가드 임계값 스윕(baseline 전략, 여러 임계 비교)")
     ap.add_argument("--sweep-thresholds", type=str, default="-0.05,-0.06,-0.08,-0.10,-0.12",

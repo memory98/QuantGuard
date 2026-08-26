@@ -43,14 +43,17 @@ from vol_tilted import VolTiltedConcentrated   # noqa: E402
 from signal_generator import (                # noqa: E402
     DD_GUARD_TICKER, DD_GUARD_LOOKBACK, DD_GUARD_THRESHOLD)
 from guards import (                          # noqa: E402
-    DDGuard, ComboGuard, SigmaDDGuard, DailyCircuitBreaker)
+    DDGuard, ComboGuard, SigmaDDGuard, DailyCircuitBreaker, K_SIGMA_RECAL)
 
 UNIVERSE_DIR = ROOT / "data" / "s3_archive" / "universe"
 QUANT_DIR = ROOT / "data" / "s3_archive" / "quant_signals"
 ACCOUNT_DIR = ROOT / "data" / "s3_archive" / "latest_signal"
 LEDGER_PATH = ROOT / "data" / "shadow_ledger.json"
 SMA_WINDOW = 120
-COST_PER_SIDE = 0.002
+from costs import DEFAULT_COST, split_turnover  # noqa: E402
+
+COST = DEFAULT_COST            # 비용 가정 단일 소스(backtest/costs.py)
+COST_PER_SIDE = COST.entry     # 기존 이름 유지(출력 문구 등에서 사용)
 
 
 class SnapshotStore:
@@ -127,7 +130,9 @@ def recompute_market(prices: PriceProvider, date, guard) -> dict:
     [2026-08-23] `use_sma: bool` → 가드 객체(backtest/guards.py). 후보가 늘어날 때
     불리언 조합이 폭발하는 것을 막고, 각 후보의 사전고정 파라미터를 원장에 박는다.
     """
-    return {"market_status": guard.status(prices, date)}
+    v = guard.evaluate(prices, date)
+    # reason은 전략이 읽지 않는다(동작 무변경). 원장에 "왜 대피했나"를 남기기 위한 것.
+    return {"market_status": v.status, "guard_reason": v.reason}
 
 
 class AccountReader:
@@ -190,12 +195,12 @@ def portfolio_return(strat, universe, market, prices, d0, d1, prev_hold, exit_da
     if wsum > 0:
         usable = {c: w / wsum for c, w in usable.items()}
     gross = sum(usable[c] * per_r[c] for c in usable) if usable else 0.0
-    turn = sum(abs(usable.get(c, 0) - prev_hold.get(c, 0)) for c in set(usable) | set(prev_hold))
+    buy_turn, sell_turn = split_turnover(usable, prev_hold)
     exited = bool(exit_date) and bool(usable)
     if exited:
-        # 비상 청산: 보유 전량을 구간 중간에 팔았으므로 매도 회전이 한 번 더 발생한다.
-        turn += sum(usable.values())
-    net = gross - turn * COST_PER_SIDE
+        # 비상 청산: 보유 전량을 구간 중간에 팔았으므로 '매도' 회전이 한 번 더 발생한다.
+        sell_turn += sum(usable.values())
+    net = gross - COST.on_turnover(buy_turn, sell_turn)
     if exited:
         # 청산 후 구간 끝까지 현금 → 다음 구간 시작 보유는 없음
         drift, cash_flag = {}, 1.0
@@ -229,6 +234,8 @@ def main():
         ("baseline+콤보가드", BaselineMomentum126(), ComboGuard()),
         ("baseline+σ임계가드", BaselineMomentum126(), SigmaDDGuard()),
         ("baseline+일간비상", BaselineMomentum126(), DailyCircuitBreaker()),
+        # σ가드 계수 2계열을 병행 채점한다 — 어느 추정량이 옳은지 고르지 않고 실측에 맡긴다.
+        ("baseline+σ재보정", BaselineMomentum126(), SigmaDDGuard(k=K_SIGMA_RECAL)),
     ]
     ledgers = {name: {"cum": 1.0, "prev": {}, "intervals": []} for name, _, _ in specs}
     bench_cum = 1.0
@@ -253,6 +260,9 @@ def main():
             ledgers[name]["cum"] *= (1 + net)
             ledgers[name]["prev"] = drift
             entry = {**row, "net_pct": round(net * 100, 2), "cash": cash}
+            if market["market_status"] == "BEAR":
+                # 왜 대피했는지를 원장에 남긴다 — 없으면 매번 과거를 재생해야 한다.
+                entry["guard_reason"] = market["guard_reason"]
             if exited:
                 entry["intra_exit"] = exit_date.strftime("%Y-%m-%d")
                 print(f"   ⚡ [{name}] {entry['intra_exit']} 비상 청산 발동")
@@ -305,6 +315,7 @@ def main():
         "cumulative": {n: round((ledgers[n]["cum"] - 1) * 100, 2) for n in names},
         # 후보별 가드 파라미터를 매번 원장에 박는다. 사후에 조용히 바뀌면 원장 비교로 드러난다.
         "guard_specs": {n: g.describe() for n, _, g in specs},
+        "cost_model": COST.describe(),
         "benchmark_pct": round((bench_cum - 1) * 100, 2),
         "account_pct": account_pct,          # None = 채점 가능한 구간 없음(0%와 구분)
         "account_intervals": acc_intervals,

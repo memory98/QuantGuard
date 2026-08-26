@@ -30,7 +30,10 @@ sys.path.insert(0, str(ROOT / "rambdaA"))
 sys.path.insert(0, str(ROOT / "rambdaB"))
 
 from guards import (  # noqa: E402
-    DDGuard, ComboGuard, SigmaDDGuard, DailyCircuitBreaker, K_SIGMA, NORMAL_SIGMA)
+    DDGuard, ComboGuard, SigmaDDGuard, DailyCircuitBreaker, K_SIGMA, NORMAL_SIGMA,
+    SMABreakGuard, AnyOf, AllOf, Not, GuardVerdict,
+    K_SIGMA_RECAL, NORMAL_SIGMA_ROLLING)
+from costs import CostModel, split_turnover, DEFAULT_COST  # noqa: E402
 from shadow_forward import portfolio_return  # noqa: E402
 from signal_generator import DD_GUARD_LOOKBACK, DD_GUARD_THRESHOLD  # noqa: E402
 from execution_audit import ExecutionAuditor, run_execution_audit  # noqa: E402
@@ -129,6 +132,28 @@ class TestSigmaDDGuard(unittest.TestCase):
         expected = abs(DD_GUARD_THRESHOLD) / (NORMAL_SIGMA * (DD_GUARD_LOOKBACK ** 0.5))
         self.assertAlmostEqual(K_SIGMA, expected, places=10)
 
+    def test_recal_k_is_derived_not_handpicked(self):
+        """재보정 K도 손으로 고른 값이 아니라 역산값인가(원본 K와 동일한 규율)."""
+        expected = abs(DD_GUARD_THRESHOLD) / (NORMAL_SIGMA_ROLLING * (DD_GUARD_LOOKBACK ** 0.5))
+        self.assertAlmostEqual(K_SIGMA_RECAL, expected, places=10)
+
+    def test_recal_k_is_looser_than_original(self):
+        """재보정판은 임계가 더 넓다(= 덜 민감). 두 계열이 실제로 다른 후보임을 고정."""
+        self.assertGreater(K_SIGMA_RECAL, K_SIGMA)
+        s = flat_then([100.0] * 30)
+        p = FakePrices(s)
+        # 같은 시계열에서 재보정판 임계가 더 음수(넓음)여야 한다
+        th_o = SigmaDDGuard().threshold_at(p, s.index[-1])
+        th_r = SigmaDDGuard(k=K_SIGMA_RECAL).threshold_at(p, s.index[-1])
+        if th_o is not None and th_r is not None:
+            self.assertLess(th_r, th_o)
+
+    def test_describe_distinguishes_k_variant(self):
+        """원장에서 두 계열이 구분되는가 — 안 그러면 나란히 채점해도 사후 식별 불가."""
+        self.assertIn("original", SigmaDDGuard().describe()["k_variant"])
+        self.assertIn("recalibrated",
+                      SigmaDDGuard(k=K_SIGMA_RECAL).describe()["k_variant"])
+
     def test_threshold_widens_with_volatility(self):
         calm = flat_then([100.0 + (1 if i % 2 else -1) * 0.3 for i in range(40)])
         wild = flat_then([100.0 + (1 if i % 2 else -1) * 6.0 for i in range(40)])
@@ -160,6 +185,22 @@ class TestSigmaDDGuard(unittest.TestCase):
         p = FakePrices(s)
         self.assertEqual(SigmaDDGuard().status(p, s.index[-1]),
                          DDGuard().status(p, s.index[-1]))
+
+    def test_describe_reports_actual_vol_window(self):
+        """describe()가 실제 vol_window를 보고하는가.
+
+        원장(AUDIT ③ STEP B)은 describe()를 그대로 박아 사후 변경을 막는 장치다.
+        여기서 표본길이를 고정 문자열로 적으면 vol_window를 바꿔 스윕할 때
+        원장에 거짓 파라미터가 남아 장치 자체가 무력화된다.
+        표본길이(vol_window)와 낙폭 지평(DD_GUARD_LOOKBACK)은 별개이므로,
+        지평은 vol_window와 무관하게 항상 DD_GUARD_LOOKBACK이어야 한다.
+        """
+        self.assertIn(f"sigma{DD_GUARD_LOOKBACK}", SigmaDDGuard().describe()["formula"])
+        for vw in (10, 63):
+            d = SigmaDDGuard(vol_window=vw).describe()
+            self.assertEqual(d["vol_window"], vw)
+            self.assertIn(f"sigma{vw}", d["formula"])
+            self.assertIn(f"sqrt({DD_GUARD_LOOKBACK})", d["formula"])
 
     def test_high_vol_crash_stays_bull_where_fixed_goes_bear(self):
         """고변동 국면에서 -10% 낙폭: 고정 임계는 BEAR, σ 임계는 아직 BULL."""
@@ -198,6 +239,97 @@ class TestDailyCircuitBreaker(unittest.TestCase):
         s = flat_then([100.0, 100.0, 50.0])
         for g in (DDGuard(), ComboGuard(), SigmaDDGuard()):
             self.assertIsNone(g.intra_exit(FakePrices(s), s.index[-3], s.index[-1]))
+
+
+class TestGuardVerdict(unittest.TestCase):
+    """판정 옆에 근거가 실려 오는가(gs-quant TriggerInfo 대응).
+
+    없으면 원장에 '왜 대피했나'가 안 남아 매번 과거를 재생해야 한다.
+    """
+
+    def test_status_still_returns_plain_string(self):
+        """기존 호출부 무변경 보장 — status()는 여전히 문자열이다."""
+        s = flat_then([100.0, 100.0, 85.0])
+        self.assertIsInstance(DDGuard().status(FakePrices(s), s.index[-1]), str)
+
+    def test_verdict_carries_reason(self):
+        s = flat_then([100.0, 100.0, 85.0])
+        v = DDGuard().evaluate(FakePrices(s), s.index[-1])
+        self.assertEqual(v.status, "BEAR")
+        self.assertTrue(v.is_bear)
+        self.assertAlmostEqual(v.reason["threshold"], DD_GUARD_THRESHOLD)
+        self.assertLess(v.reason["dd"], 0)
+        self.assertTrue(v.reason["fired"])
+
+    def test_verdict_rejects_unknown_status(self):
+        with self.assertRaises(ValueError):
+            GuardVerdict("MAYBE")
+
+    def test_combo_reason_names_which_condition_fired(self):
+        """콤보가드가 DD 때문인지 SMA 때문인지 구분되는가."""
+        s = flat_then([100.0, 100.0, 85.0])
+        v = ComboGuard().evaluate(FakePrices(s), s.index[-1])
+        self.assertEqual(v.status, "BEAR")
+        self.assertIn("DD가드", [f["rule"] for f in v.reason["fired_by"]])
+
+
+class TestCombinators(unittest.TestCase):
+    """조합자가 기존 상속 구현과 같은 답을 내는가 + 클래스 추가 없이 후보를 만드는가."""
+
+    def test_anyof_reproduces_combo_guard(self):
+        """ComboGuard == AnyOf([DD, SMA]) — 여러 형태의 계열에서 판정이 일치."""
+        cases = [
+            flat_then([100.0, 100.0, 85.0]),        # DD 발동
+            flat_then([100.0] * 5),                  # 둘 다 미발동
+            flat_then([100.0, 100.0, 99.0]),         # 얕은 딥
+        ]
+        composed = AnyOf([DDGuard(), SMABreakGuard()])
+        for s in cases:
+            p = FakePrices(s)
+            self.assertEqual(ComboGuard().status(p, s.index[-1]),
+                             composed.status(p, s.index[-1]))
+
+    def test_allof_is_stricter_than_anyof(self):
+        s = flat_then([100.0, 100.0, 85.0])
+        p = FakePrices(s)
+        any_ = AnyOf([DDGuard(), SMABreakGuard()]).status(p, s.index[-1])
+        all_ = AllOf([DDGuard(), SMABreakGuard()]).status(p, s.index[-1])
+        self.assertEqual(any_, "BEAR")          # DD만으로 발동
+        self.assertEqual(all_, "BULL")          # SMA는 미발동이므로 AND는 불성립
+
+    def test_not_inverts(self):
+        s = flat_then([100.0, 100.0, 85.0])
+        p = FakePrices(s)
+        self.assertEqual(DDGuard().status(p, s.index[-1]), "BEAR")
+        self.assertEqual(Not(DDGuard()).status(p, s.index[-1]), "BULL")
+
+    def test_empty_composite_rejected(self):
+        with self.assertRaises(ValueError):
+            AnyOf([])
+
+
+class TestCostModel(unittest.TestCase):
+    """비용 단일 소스 도입이 기존 수치를 바꾸지 않는가."""
+
+    def test_symmetric_model_equals_old_formula(self):
+        new_w, prev_w = {"a": 0.5, "b": 0.5}, {"a": 0.2, "c": 0.3}
+        old_turn = sum(abs(new_w.get(c, 0) - prev_w.get(c, 0))
+                       for c in set(new_w) | set(prev_w))
+        buy, sell = split_turnover(new_w, prev_w)
+        self.assertAlmostEqual(buy + sell, old_turn)
+        self.assertAlmostEqual(DEFAULT_COST.on_turnover(buy, sell),
+                               old_turn * 0.002)
+
+    def test_asymmetric_costs_are_expressible(self):
+        m = CostModel(entry=0.001, exit=0.003)
+        self.assertFalse(m.is_symmetric)
+        self.assertAlmostEqual(m.round_trip, 0.004)
+        self.assertAlmostEqual(m.on_turnover(1.0, 0.0), 0.001)
+        self.assertAlmostEqual(m.on_turnover(0.0, 1.0), 0.003)
+
+    def test_negative_cost_rejected(self):
+        with self.assertRaises(ValueError):
+            CostModel(entry=-0.001)
 
 
 class OneStock:
