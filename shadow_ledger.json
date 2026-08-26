@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-26 12:40:39",
+  "generated_at": "2026-08-26 12:53:29",
   "source": "universe",
   "intervals": [
     {
@@ -122,6 +122,143 @@
     "exit_pct": 0.2,
     "round_trip_pct": 0.4,
     "symmetric": true
+  },
+  "guard_reasons": {
+    "2026-08-03→2026-08-10": {
+      "baseline(DD가드)": {
+        "rule": "DD가드",
+        "dd": -0.23682756522927706,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "concentrated(DD가드)": {
+        "rule": "DD가드",
+        "dd": -0.23682756522927706,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "voltilt(DD가드)": {
+        "rule": "DD가드",
+        "dd": -0.23682756522927706,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "baseline+콤보가드": {
+        "rule": "콤보가드",
+        "op": "ANY_OF",
+        "fired_by": [
+          {
+            "rule": "DD가드",
+            "dd": -0.23682756522927706,
+            "threshold": -0.08,
+            "fired": true
+          },
+          {
+            "rule": "SMA이탈",
+            "close": 99105.0,
+            "sma": 104773.75852864583,
+            "window": 120,
+            "fired": true
+          }
+        ],
+        "members": [
+          {
+            "rule": "DD가드",
+            "dd": -0.23682756522927706,
+            "threshold": -0.08,
+            "fired": true
+          },
+          {
+            "rule": "SMA이탈",
+            "close": 99105.0,
+            "sma": 104773.75852864583,
+            "window": 120,
+            "fired": true
+          }
+        ]
+      },
+      "baseline+σ임계가드": {
+        "rule": "σ임계가드",
+        "dd": -0.23682756522927706,
+        "threshold": -0.22035987089194364,
+        "vol_window": 20,
+        "fired": true
+      },
+      "baseline+일간비상": {
+        "rule": "일간비상차단기",
+        "delegated_to": "DD가드",
+        "base": {
+          "rule": "DD가드",
+          "dd": -0.23682756522927706,
+          "threshold": -0.08,
+          "fired": true
+        }
+      }
+    },
+    "2026-08-10→2026-08-18": {
+      "baseline(DD가드)": {
+        "rule": "DD가드",
+        "dd": -0.15649894269977316,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "concentrated(DD가드)": {
+        "rule": "DD가드",
+        "dd": -0.15649894269977316,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "voltilt(DD가드)": {
+        "rule": "DD가드",
+        "dd": -0.15649894269977316,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "baseline+콤보가드": {
+        "rule": "콤보가드",
+        "op": "ANY_OF",
+        "fired_by": [
+          {
+            "rule": "DD가드",
+            "dd": -0.15649894269977316,
+            "threshold": -0.08,
+            "fired": true
+          },
+          {
+            "rule": "SMA이탈",
+            "close": 98265.0,
+            "sma": 105732.285546875,
+            "window": 120,
+            "fired": true
+          }
+        ],
+        "members": [
+          {
+            "rule": "DD가드",
+            "dd": -0.15649894269977316,
+            "threshold": -0.08,
+            "fired": true
+          },
+          {
+            "rule": "SMA이탈",
+            "close": 98265.0,
+            "sma": 105732.285546875,
+            "window": 120,
+            "fired": true
+          }
+        ]
+      },
+      "baseline+일간비상": {
+        "rule": "일간비상차단기",
+        "delegated_to": "DD가드",
+        "base": {
+          "rule": "DD가드",
+          "dd": -0.15649894269977316,
+          "threshold": -0.08,
+          "fired": true
+        }
+      }
+    }
   },
   "benchmark_pct": 6.95,
   "account_pct": -3.5,
