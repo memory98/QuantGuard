@@ -469,6 +469,13 @@ def lambda_handler(event, context):
             "prev_equity":          prev_equity,
             "prev_date":            prev_date,
             "weekly_return_pct":    weekly_return_pct,
+            # [L6ⓔ 소비자 계약] 이 화이트리스트는 **조용히 필드를 버린다.**
+            # korea_result에 키를 추가해도 여기 안 적으면 아카이브에 안 남고,
+            # 아무 에러도 나지 않아 몇 주간 모른 채 지나간다(2026-08-31 실사고:
+            # fix33의 execution_audit이 2주간 유실됨 — BEAR 경로는 korea_result를
+            # 통째로 넣어 남는데 BULL 경로만 누락돼 경로별로 동작이 달랐다).
+            # → 키를 늘릴 때는 tests/test_archive_contract.py 의 분류표도 함께 갱신할 것.
+            #   (미분류 키가 생기면 그 테스트가 실패해 CI가 배포를 막는다)
             "korea": {
                 "sell_orders":            korea_result.get("sell_orders", []),
                 "buy_orders":             korea_result.get("buy_orders", []),
@@ -477,6 +484,9 @@ def lambda_handler(event, context):
                 "skipped_band":           korea_result.get("skipped_band", []),
                 "buys_skipped_unsettled": korea_result.get("buys_skipped_unsettled", False),
                 "sell_settled":           korea_result.get("sell_settled", True),
+                # [fix38] 체결 관측 결과. 스위치가 꺼져 있어도 사유(DISABLED)가 남아야
+                # "왜 아무것도 안 보이는지"를 아카이브만 보고 판별할 수 있다.
+                "execution_audit":        korea_result.get("execution_audit", {}),
             },
             "usa": usa_result,
         }
