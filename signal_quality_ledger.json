@@ -56,13 +56,32 @@
       "n": 89,
       "proxy_corr": 0.9679,
       "proxy_beta": 1.0954
+    },
+    {
+      "from": "2026-08-24",
+      "to": "2026-08-31",
+      "market_status": "BULL",
+      "ic": -0.0284,
+      "top10_pct": 2.579,
+      "uni_pct": 2.668,
+      "spread_pct": -0.089,
+      "quintiles_pct": [
+        2.605,
+        1.428,
+        4.162,
+        2.862,
+        2.284
+      ],
+      "n": 86,
+      "proxy_corr": 0.9697,
+      "proxy_beta": 1.0548
     }
   ],
-  "updated_at": "2026-08-26 12:53:49",
+  "updated_at": "2026-08-31 14:58:04",
   "verdict": {
     "status": "INSUFFICIENT",
-    "weeks": 3,
-    "need": 23,
+    "weeks": 4,
+    "need": 22,
     "note": "판정 보류 — 26주 누적 전엔 경향만 본다"
   },
   "criteria": {
