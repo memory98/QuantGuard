@@ -42,6 +42,7 @@ from aggressive import ConcentratedMomentum   # noqa: E402
 from vol_tilted import VolTiltedConcentrated   # noqa: E402
 from signal_generator import (                # noqa: E402
     DD_GUARD_TICKER, DD_GUARD_LOOKBACK, DD_GUARD_THRESHOLD)
+from universe_ext import ForeignEtfDiscovery, ForeignAugmenter  # noqa: E402
 from guards import (                          # noqa: E402
     DDGuard, ComboGuard, SigmaDDGuard, DailyCircuitBreaker, K_SIGMA_RECAL, MarketGuard)
 
@@ -116,6 +117,10 @@ class PriceProvider:
             return None
         v = float(sub.pct_change().dropna().tail(window).std())
         return v if v > 0 else None
+
+    def series(self, code):
+        """종목 전체 종가 시리즈(없으면 None). universe_ext가 모멘텀 계산에 쓴다."""
+        return self._s.get(code)
 
     def kodex(self):
         return self._s.get(DD_GUARD_TICKER)
@@ -242,11 +247,30 @@ def build_ledger(src, rows, names, ledgers, specs, guard_reasons) -> dict:
         "intervals": rows,
         "cumulative": {n: round((ledgers[n]["cum"] - 1) * 100, 2) for n in names},
         # 후보별 가드 파라미터를 매번 원장에 박는다. 사후에 조용히 바뀌면 원장 비교로 드러난다.
-        "guard_specs": {n: g.describe() for n, _, g in specs},
+        "guard_specs": {n: g.describe() for n, _, g, _u in specs},
         "cost_model": COST.describe(),
         # 대피/청산 사유. 없으면 "이 후보가 왜 졌나"를 물을 때마다 과거를 재생해야 한다.
         "guard_reasons": guard_reasons,
     }
+
+
+def _build_augmenters():
+    """해외 편입 후보용 확장기 2종 + 가격을 받아와야 할 해외 코드 목록.
+
+    네이버 조회가 실패하면 (None, None, []) 을 돌려 **그 후보만 빠지고** 나머지
+    원장은 정상 생성된다. 관측 장치가 원장 전체를 죽이면 안 된다(fail-safe).
+    """
+    try:
+        newly = ForeignEtfDiscovery().discover()
+    except Exception as e:
+        print(f"⚠️ 해외 ETF 목록 수집 실패({e}) → 해외 편입 후보 2종 건너뜀")
+        return None, None, []
+    names = dict(zip(newly["Code"], newly["Name"]))
+    print(f"🌏 해외 편입 후보 유니버스: {len(names)}종 "
+          f"(예: {', '.join(list(names.values())[:3])})")
+    return (ForeignAugmenter(names, mode="single"),
+            ForeignAugmenter(names, mode="split"),
+            list(names.keys()))
 
 
 def main():
@@ -258,24 +282,34 @@ def main():
         print("⚠️ 스냅샷 2개 미만 → 구간 없음. universe 스냅샷이 쌓이면(2026-08-03~) 누적 시작.")
         return
 
+    aug_single, aug_split, foreign_codes = _build_augmenters()
+
     codes = {s["code"] for p in points for s in p["universe"]}
+    codes |= set(foreign_codes)
     prices = PriceProvider().load(codes)
     account = AccountReader().load()
 
     # 섀도우 전략: (표시명, 전략객체, 가드객체) — 가드는 모두 가격에서 균일 재계산
     # [2026-08-23 추가] 아래 두 후보는 2026-08 재진입 국면 관측용. 임계는 사전고정이며
     # 사후에 바꾸지 않는다(근거는 backtest/guards.py 주석). 프로덕션 무반영.
+    # 섀도우 전략: (표시명, 전략객체, 가드객체, 유니버스확장기|None)
+    # [2026-08-23 추가] σ임계·일간비상 — 재진입 국면 관측용.
+    # [2026-08-31 추가] 해외 편입 2종 — "한국만 무너진" 국면의 분산 효과 측정용.
     specs = [
-        ("baseline(DD가드)", BaselineMomentum126(), DDGuard()),
-        ("concentrated(DD가드)", ConcentratedMomentum(), DDGuard()),
-        ("voltilt(DD가드)", VolTiltedConcentrated(), DDGuard()),   # 재설계 공격형(리스크조정 선별+집중)
-        ("baseline+콤보가드", BaselineMomentum126(), ComboGuard()),
-        ("baseline+σ임계가드", BaselineMomentum126(), SigmaDDGuard()),
-        ("baseline+일간비상", BaselineMomentum126(), DailyCircuitBreaker()),
+        ("baseline(DD가드)", BaselineMomentum126(), DDGuard(), None),
+        ("concentrated(DD가드)", ConcentratedMomentum(), DDGuard(), None),
+        ("voltilt(DD가드)", VolTiltedConcentrated(), DDGuard(), None),   # 재설계 공격형(리스크조정 선별+집중)
+        ("baseline+콤보가드", BaselineMomentum126(), ComboGuard(), None),
+        ("baseline+σ임계가드", BaselineMomentum126(), SigmaDDGuard(), None),
+        ("baseline+일간비상", BaselineMomentum126(), DailyCircuitBreaker(), None),
         # σ가드 계수 2계열을 병행 채점한다 — 어느 추정량이 옳은지 고르지 않고 실측에 맡긴다.
-        ("baseline+σ재보정", BaselineMomentum126(), SigmaDDGuard(k=K_SIGMA_RECAL)),
+        ("baseline+σ재보정", BaselineMomentum126(), SigmaDDGuard(k=K_SIGMA_RECAL), None),
+        # 해외 편입: 'single'은 전부 한 버킷이라 섹터상한 때문에 최대 1종목(≈10%)만 들어온다.
+        # 'split'은 지역/테마로 나눠 3~4종목까지 가능. 어느 쪽이 옳은지 정하지 않고 둘 다 잰다.
+        ("baseline+해외1", BaselineMomentum126(), DDGuard(), aug_single),
+        ("baseline+해외분리", BaselineMomentum126(), DDGuard(), aug_split),
     ]
-    ledgers = {name: {"cum": 1.0, "prev": {}, "intervals": []} for name, _, _ in specs}
+    ledgers = {name: {"cum": 1.0, "prev": {}, "intervals": []} for name, *_ in specs}
     bench_cum = 1.0
     acc_cum = 1.0
     acc_intervals = 0        # 실계좌가 실제로 채점된 구간 수(0이면 누적은 '없음'이지 0%가 아니다)
@@ -294,13 +328,15 @@ def main():
         # 변동성조정 전략용: 유니버스에 vol 필드 주입(다른 전략은 무시)
         uni = [{**s, "vol": prices.volatility(s["code"], d0)} for s in a["universe"]]
 
-        for name, strat, guard in specs:
+        for name, strat, guard, aug in specs:
             market = recompute_market(prices, d0, guard)
+            # 해외 편입 후보만 유니버스를 넓혀 채점한다(나머지는 원본 그대로).
+            uni_c = aug.augment(uni, d0, prices) if aug is not None else uni
             # 주간 판정이 BULL일 때만 구간 중 비상 청산을 볼 의미가 있다(BEAR면 이미 현금).
             exit_date = (guard.intra_exit(prices, d0, d1)
                          if market["market_status"] == "BULL" else None)
             net, cash, drift, exited = portfolio_return(
-                strat, uni, market, prices, d0, d1, ledgers[name]["prev"], exit_date)
+                strat, uni_c, market, prices, d0, d1, ledgers[name]["prev"], exit_date)
             ledgers[name]["cum"] *= (1 + net)
             ledgers[name]["prev"] = drift
             entry = {**row, "net_pct": round(net * 100, 2), "cash": cash}
@@ -335,7 +371,7 @@ def main():
 
     # ── 출력 ──
     print(f"\n📊 섀도우 전진검증 성적표 (구간 {len(rows)}개, 왕복비용 {COST_PER_SIDE*2*100:.1f}%)")
-    names = [n for n, _, _ in specs]
+    names = [n for n, *_ in specs]
     print(f"\n{'구간':<24}" + "".join(f"{n[:16]:>17}" for n in names)
           + f"{'벤치':>9}{'실계좌':>9}")
     for r in rows:

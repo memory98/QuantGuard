@@ -324,7 +324,9 @@ class TestLedgerContract(unittest.TestCase):
             rows=[{"from": "2026-08-03", "to": "2026-08-10", "후보A": 0.0}],
             names=["후보A"],
             ledgers={"후보A": {"cum": 1.0}},
-            specs=[("후보A", None, g)],
+            # [2026-08-31] 스펙이 (이름, 전략, 가드, 유니버스확장기) 4-튜플로 확장됨.
+            # 이 테스트의 의도(대피 근거가 저장 본문까지 도달하는가)는 그대로다.
+            specs=[("후보A", None, g, None)],
             guard_reasons=guard_reasons,
         )
 
