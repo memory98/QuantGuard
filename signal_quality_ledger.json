@@ -151,7 +151,10 @@
       "last_corr": 0.9754,
       "floor": 0.8,
       "breach_streak": 0,
-      "need_streak": 2
+      "need_streak": 2,
+      "measured": true,
+      "stale_weeks": 0,
+      "last_corr_asof": "2026-09-14"
     },
     "midpoint": {
       "weeks": 13,

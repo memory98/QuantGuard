@@ -144,6 +144,32 @@ class LiveTradingGate:
             streak += 1
         return streak
 
+    def proxy_stale_weeks(self) -> int:
+        """최근부터 연속으로 상관이 **측정 자체가 안 된** 주 수.
+
+        결측은 ②번 중단선의 연속을 끊는다(위 `proxy_breach_streak`). 그래서 감시기가
+        죽으면 중단선은 영영 발동하지 않는데, 그 사실이 아무 데도 드러나지 않았다 —
+        죽은 감시기가 '정상'으로 읽히는 fail-open이다. 여기서 결측을 **세어** 드러낸다.
+        판정 기준(사전 고정)은 건드리지 않고 관측만 추가한다.
+        """
+        stale = 0
+        for r in reversed(self.ledger.get("records", [])):
+            if r.get("proxy_corr") is not None:
+                break
+            stale += 1
+        return stale
+
+    def last_measured_proxy(self) -> tuple[float | None, str | None]:
+        """마지막으로 **실제 측정된** 상관과 그 구간 종료일.
+
+        값만 반환하면 호출부가 그걸 '이번 주 값'으로 표시한다(실제 사고 경로).
+        언제 측정된 값인지를 함께 돌려줘 호출부가 낡음을 숨길 수 없게 한다.
+        """
+        for r in reversed(self.ledger.get("records", [])):
+            if r.get("proxy_corr") is not None:
+                return r["proxy_corr"], r.get("to")
+        return None, None
+
     def eta(self) -> str | None:
         """26주 도달 예상일(마지막 구간 종료일 + 남은 주). 표본 없으면 None."""
         recs = self.ledger.get("records") or []
@@ -162,9 +188,8 @@ class LiveTradingGate:
         violations = self.checker.scan(self.window_start())
         streak = self.proxy_breach_streak()
         spread = self.spread_cum_pct()
-        last_corr = next((r.get("proxy_corr")
-                          for r in reversed(self.ledger.get("records", []))
-                          if r.get("proxy_corr") is not None), None)
+        last_corr, last_corr_asof = self.last_measured_proxy()
+        stale = self.proxy_stale_weeks()
 
         base = {
             "weeks": weeks,
@@ -174,7 +199,11 @@ class LiveTradingGate:
             "window_start": self.window_start(),
             "execution": {"violations": violations},
             "proxy": {"last_corr": last_corr, "floor": PROXY_CORR_FLOOR,
-                      "breach_streak": streak, "need_streak": PROXY_BREACH_STREAK},
+                      "breach_streak": streak, "need_streak": PROXY_BREACH_STREAK,
+                      # measured=False면 last_corr는 과거값이다. 호출부는 반드시
+                      # last_corr_asof와 함께 표시해야 한다(낡은 값의 현재값 위장 방지).
+                      "measured": stale == 0, "stale_weeks": stale,
+                      "last_corr_asof": last_corr_asof},
             "midpoint": {"weeks": MIDPOINT_WEEKS,
                          "reached": weeks >= MIDPOINT_WEEKS,
                          "spread_cum_pct": spread,
@@ -218,11 +247,29 @@ class LiveTradingGate:
         }
 
     def alerts(self) -> list[str]:
-        """정상이면 침묵. 중단선 발동만 알린다."""
+        """정상이면 침묵. 중단선 발동 + **감시기 자체가 죽은 것**만 알린다.
+
+        후자를 넣는 이유: 대리지표가 측정되지 않으면 ②번 중단선은 구조적으로
+        발동할 수 없다(결측이 연속을 끊으므로). 그 상태가 조용하면 "중단선 미발동"이
+        '안전'이 아니라 '감시 중단'을 뜻하게 된다. 중단선 임계는 사전 고정이라
+        건드리지 않고, **못 보고 있다는 사실만** 알린다.
+
+        1주 결측은 알리지 않는다 — 일시적 수집 실패와 구조적 중단을 가르는 기준은
+        ②번과 같은 2주 연속을 쓴다(경보 피로 방지).
+        """
+        out = []
         v = self.verdict()
-        if v["status"] in ("RUNNING", "HORIZON_REACHED"):
-            return []
-        return [f"🛑 STEP E 중단선 발동: {v['status']} — {v['note']}"]
+        if v["status"] not in ("RUNNING", "HORIZON_REACHED"):
+            out.append(f"🛑 STEP E 중단선 발동: {v['status']} — {v['note']}")
+
+        pr = v["proxy"]
+        if pr["stale_weeks"] >= PROXY_BREACH_STREAK:
+            asof = pr["last_corr_asof"] or "기록 없음"
+            out.append(
+                f"⚠️ 대리지표 감시 중단: {pr['stale_weeks']}주 연속 측정 실패 "
+                f"(마지막 실측 {pr['last_corr']} @ {asof}) — "
+                f"②번 중단선이 발동할 수 없는 상태다. 수집 경로를 점검할 것")
+        return out
 
 
 def main() -> int:
@@ -249,8 +296,13 @@ def main() -> int:
     for x in v["execution"]["violations"][:5]:
         print(f"      - {x['date']} {x['kind']}: {x['detail']}")
     p = v["proxy"]
-    print(f"   ② 대리지표 상관: {p['last_corr']} (바닥 {p['floor']}, "
-          f"연속 {p['breach_streak']}/{p['need_streak']}주)")
+    if p["measured"]:
+        print(f"   ② 대리지표 상관: {p['last_corr']} (바닥 {p['floor']}, "
+              f"연속 {p['breach_streak']}/{p['need_streak']}주)")
+    else:
+        # 낡은 값을 현재값처럼 찍지 않는다 — 이게 이번 수정의 핵심 사고 경로다.
+        print(f"   ② 대리지표 상관: 측정 불가 {p['stale_weeks']}주 연속 "
+              f"(마지막 실측 {p['last_corr']} @ {p['last_corr_asof']})")
     m = v["midpoint"]
     print(f"   ③ 신호 조기사망: 스프레드 누적 {m['spread_cum_pct']:+.2f}%p "
           f"(바닥 {m['floor_pct']}%p, {m['weeks']}주 시점"

@@ -291,5 +291,100 @@ class TestRender(unittest.TestCase):
         self.assertIn("STOP_PROXY", out)
 
 
+# ────────────────── 대리지표 감시기 생존 관측 (B-1) ──────────────────
+
+class TestProxyStaleness(unittest.TestCase):
+    """감시기가 죽었는데 '정상'으로 읽히던 fail-open의 회귀 방벽.
+
+    사고 경로(2026-09-14 감사 재현): 대리지표 측정이 3주 연속 실패해
+    `proxy_corr=None`이 쌓였는데, 게이트는 3주 전 값 0.96을 **이번 주 값처럼**
+    표시하고 `breach_streak=0`(결측이 연속을 끊음)이라 "중단선 미발동 — 계속"을
+    냈다. 즉 ②번 중단선은 구조적으로 발동 불가인데 화면은 건강해 보였다.
+
+    구버전이면 아래 테스트는 전부 실패한다(measured/stale_weeks/last_corr_asof
+    키 자체가 없고 alerts()가 침묵) — V2 변이-구별.
+    """
+
+    def gate(self, recs):
+        return LiveTradingGate(ledger(recs), NoViolations())
+
+    def stale(self, n_ok=2, n_stale=3):
+        """정상 n_ok주 뒤에 결측 n_stale주가 이어지는 원장."""
+        from datetime import date, timedelta
+        d0 = date(2026, 8, 3)
+        out = []
+        for i in range(n_ok + n_stale):
+            a, b = d0 + timedelta(weeks=i), d0 + timedelta(weeks=i + 1)
+            corr = 0.96 if i < n_ok else None
+            out.append(rec(a.isoformat(), b.isoformat(), corr=corr))
+        return out
+
+    def test_최신주가_결측이면_measured_False(self):
+        p = self.gate(self.stale()).verdict()["proxy"]
+        self.assertFalse(p["measured"])
+        self.assertEqual(p["stale_weeks"], 3)
+
+    def test_결측이면_마지막_실측_시점을_함께_준다(self):
+        p = self.gate(self.stale()).verdict()["proxy"]
+        # 값만 주면 호출부가 현재값으로 표시한다 — 시점이 반드시 붙어야 한다.
+        self.assertEqual(p["last_corr"], 0.96)
+        self.assertEqual(p["last_corr_asof"], "2026-08-17")
+
+    def test_감시중단_2주면_경보(self):
+        alerts = self.gate(self.stale(n_stale=2)).alerts()
+        self.assertTrue(any("감시 중단" in a for a in alerts), alerts)
+
+    def test_감시중단_1주는_침묵(self):
+        # 일시적 수집 실패로 매주 경보가 뜨면 경보 피로가 생긴다(②번과 같은 2주 기준).
+        self.assertEqual(self.gate(self.stale(n_stale=1)).alerts(), [])
+
+    def test_전부_측정되면_measured_True_이고_침묵(self):
+        p = self.gate(weeks(4)).verdict()["proxy"]
+        self.assertTrue(p["measured"])
+        self.assertEqual(p["stale_weeks"], 0)
+        self.assertEqual(self.gate(weeks(4)).alerts(), [])
+
+    def test_실측이력이_전무해도_안전(self):
+        recs = [rec("2026-08-03", "2026-08-10", corr=None),
+                rec("2026-08-10", "2026-08-18", corr=None)]
+        p = self.gate(recs).verdict()["proxy"]
+        self.assertIsNone(p["last_corr"])
+        self.assertIsNone(p["last_corr_asof"])
+        self.assertEqual(p["stale_weeks"], 2)
+
+    def test_결측_관측이_사전고정_임계를_바꾸지_않는다(self):
+        # 이번 수정은 '관측 추가'이지 '기준 변경'이 아니다(STEP E 사전 고정 원칙).
+        c = self.gate(self.stale()).verdict()["criteria"]
+        self.assertEqual(c["proxy_corr_floor"], 0.80)
+        self.assertEqual(c["proxy_breach_streak"], 2)
+        self.assertEqual(c["horizon_weeks"], 26)
+        self.assertEqual(c["midpoint_weeks"], 13)
+        self.assertEqual(c["midpoint_spread_floor_pct"], -10.0)
+
+    def test_결측중에도_상태는_RUNNING_이다(self):
+        # 감시 중단은 '중단선 발동'이 아니다 — 기준을 사후에 늘리지 않는다.
+        self.assertEqual(self.gate(self.stale()).verdict()["status"], "RUNNING")
+
+    def test_결측_렌더는_낡은값을_현재값처럼_보이지_않는다(self):
+        g = self.gate(self.stale()).verdict()
+        out = "\n".join(render_live_gate({"live_gate": g}))
+        self.assertIn("측정 불가", out)
+        self.assertIn("3주 연속", out)
+        self.assertIn("2026-08-17", out)          # 마지막 실측 시점이 드러나야 한다
+        self.assertNotIn("바닥 0.8, 연속", out)    # 정상 서식으로 찍히면 안 된다
+
+    def test_구원장_블록도_렌더가_죽지_않는다(self):
+        # measured 키가 없던 시절의 저장분(하위호환).
+        old = {"weeks": 3, "horizon_weeks": 26, "eta": "2027-02-01",
+               "execution": {"violations": []},
+               "proxy": {"last_corr": 0.95, "floor": 0.8,
+                         "breach_streak": 0, "need_streak": 2},
+               "midpoint": {"weeks": 13, "reached": False,
+                            "spread_cum_pct": 1.0, "floor_pct": -10.0},
+               "status": "RUNNING", "note": "계속"}
+        out = "\n".join(render_live_gate({"live_gate": old}))
+        self.assertIn("0.95", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -70,9 +70,17 @@ def render_live_gate(sq: dict | None) -> list[str]:
 
     p = g.get("proxy", {})
     corr = p.get("last_corr")
-    lines.append(f"• ② 대리지표 상관: {corr:.2f} (바닥 {p.get('floor')}, "
-                 f"연속 {p.get('breach_streak', 0)}/{p.get('need_streak', 2)}주)"
-                 if corr is not None else "• ② 대리지표 상관: 측정 불가")
+    # measured가 없는 구(舊) 원장 블록은 corr 유무로 대체 판정(하위호환).
+    measured = p.get("measured", corr is not None)
+    if measured and corr is not None:
+        lines.append(f"• ② 대리지표 상관: {corr:.2f} (바닥 {p.get('floor')}, "
+                     f"연속 {p.get('breach_streak', 0)}/{p.get('need_streak', 2)}주)")
+    elif corr is not None:
+        # 낡은 값을 이번 주 값처럼 보여주면 죽은 감시기가 '정상'으로 읽힌다.
+        lines.append(f"• ② 대리지표 상관: ⚠️ 측정 불가 {p.get('stale_weeks', '?')}주 연속 "
+                     f"(마지막 실측 {corr:.2f} @ {p.get('last_corr_asof') or '?'})")
+    else:
+        lines.append("• ② 대리지표 상관: ⚠️ 측정 불가 (실측 이력 없음)")
 
     m = g.get("midpoint", {})
     tail = "" if m.get("reached") else f" — {m.get('weeks')}주 시점에 판정"
