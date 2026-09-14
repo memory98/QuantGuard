@@ -6,7 +6,16 @@ on:
     paths:
       - 'rambdaA/**'
       - 'rambdaB/**'
+      # [#OPEN-CI2] 테스트·섀도우 코드 변경도 test 잡을 돌린다. 이 경로가 없어서 fix39·fix40이
+      # CI 테스트 0회로 main에 들어갔다. deploy 잡은 아래 `changes` 필터가 별도라
+      # rambdaA/B가 바뀌지 않으면 여전히 skip된다(테스트만 돈다).
+      - 'tests/**'
+      - 'backtest/**'
+      - 'strategies/**'
       - '.github/workflows/deploy.yml'
+  # [#OPEN-CI] 배포 없이 실계좌 Lambda의 LastModified/CodeSha256만 조회한다.
+  # rambdaA가 fix22에서 3주간 멈춰 있던 걸 아무도 몰랐던 원인이 '배포 결과를 볼 수단 없음'이었다.
+  workflow_dispatch:
 
 permissions:
   id-token: write   # OIDC 토큰 발급 필수
@@ -14,6 +23,7 @@ permissions:
 
 jobs:
   changes:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       rambdaA: ${{ steps.filter.outputs.rambdaA }}
@@ -46,9 +56,27 @@ jobs:
       - name: 실행경로 단위테스트 (통과해야 배포)
         run: python -m unittest discover -s tests -v
 
+  lambda-status:
+    # 읽기 전용 조회. 수동 실행(workflow_dispatch)에서만 돈다.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: 실계좌 Lambda 상태 조회
+        run: |
+          for fn in "${{ vars.LAMBDA_FUNCTION_NAME_A }}" "${{ vars.LAMBDA_FUNCTION_NAME_B }}"; do
+            aws lambda get-function-configuration --function-name "$fn" \
+              --query '{Name:FunctionName,LastModified:LastModified,CodeSha256:CodeSha256,State:State,LastUpdateStatus:LastUpdateStatus}' \
+              --output table
+          done
+
   deploy-rambda-a:
     needs: [changes, test]
-    if: needs.changes.outputs.rambdaA == 'true'
+    if: github.event_name == 'push' && needs.changes.outputs.rambdaA == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,7 +95,7 @@ jobs:
 
   deploy-rambda-b:
     needs: [changes, test]
-    if: needs.changes.outputs.rambdaB == 'true'
+    if: github.event_name == 'push' && needs.changes.outputs.rambdaB == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
