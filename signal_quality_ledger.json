@@ -137,5 +137,37 @@
     "ir": 0.16,
     "spread_mean_pct": 0.615,
     "spread_winrate": 0.554
+  },
+  "live_gate": {
+    "weeks": 6,
+    "horizon_weeks": 26,
+    "need": 20,
+    "eta": "2027-02-01",
+    "window_start": "2026-08-03",
+    "execution": {
+      "violations": []
+    },
+    "proxy": {
+      "last_corr": 0.9754,
+      "floor": 0.8,
+      "breach_streak": 0,
+      "need_streak": 2
+    },
+    "midpoint": {
+      "weeks": 13,
+      "reached": false,
+      "spread_cum_pct": -3.806,
+      "floor_pct": -10.0
+    },
+    "criteria": {
+      "horizon_weeks": 26,
+      "midpoint_weeks": 13,
+      "midpoint_spread_floor_pct": -10.0,
+      "proxy_corr_floor": 0.8,
+      "proxy_breach_streak": 2,
+      "note": "사전 고정 2026-09-08 — 사후에 바꾸지 않는다(AUDIT.md ③ STEP E)"
+    },
+    "status": "RUNNING",
+    "note": "중단선 미발동 — 계속. 20주 남음 (예상 2027-02-01)"
   }
 }
