@@ -122,7 +122,7 @@
 
 ---
 
-## ② 발견 이력 원장 (매번 갱신) — 최종 갱신 2026-09-15 (재감사: rambdaA 미배포 6주째 실증 — #OPEN-CI 최우선)
+## ② 발견 이력 원장 (매번 갱신) — 최종 갱신 2026-09-15 (rambdaA fix24~26 실배포 v1.0.20260915.3 — #OPEN-CI 부분 해소)
 
 ### 컴포넌트 리스크 맵 & 감사 커버리지
 > "적용 렌즈"에 L1~L5 중 이미 통과한 것을 적는다. 다섯 개가 다 차야 "감사 완료".
@@ -134,7 +134,7 @@
 > | `rambdaB/lambda_function.py` | 💰💰💰 | 08-31 | L1,L2✓,L4✓,L5,L6ⓓ✓(fix30),**L6ⓔ✓(아카이브 계약 테스트, fix38)** | L3 남음. ↻(fix38 후) |
 > | **시스템 전체 (A↔B↔S3↔분석)** | 💰💰💰 | **08-31** | L6ⓐ✓ⓑ✓(08-14 실측)ⓒ✓(08-22 재진입)ⓓ✓**ⓔ✓(fix38)** | 6개 렌즈 1순회 완료. 다음은 재감사(다른 각도) |
 > | `rambdaB/kis_common.py` | 💰💰💰 | 08-03 | L1,L5 | L2·L4 남음. ↻(신규 통합코드) |
-> | `rambdaA/signal_generator.py` | 💰💰 | 08-22 | L1,L3✓(DD·VIX·모멘텀),L6ⓒ✓(BEAR→BULL 실전이 실측) | L2·L4·L5 남음. **#OPEN-B 우선순위 상향(상)**·#OPEN-R 표본1. **⚠️ 09-15 실증: 실계좌 배포본은 fix22 — fix24~26 미탑재(#OPEN-CI)** |
+> | `rambdaA/signal_generator.py` | 💰💰 | 08-22 | L1,L3✓(DD·VIX·모멘텀),L6ⓒ✓(BEAR→BULL 실전이 실측) | L2·L4·L5 남음. **#OPEN-B 우선순위 상향(상)**·#OPEN-R 표본1. **09-15 fix24~26 실배포(v1.0.20260915.3) — 6주간 fix22였음(#OPEN-CI). ↻ 09-21 첫 실행 로그 확인** |
 > | `rambdaA/yf.py` (야후 수집) | 💰💰 | 08-03 | L3,L5 | L2(길이불일치)·L4 남음. start/end 무시·range 하드코딩 확인 |
 > | `rambdaA/fdr.py` (ETF 목록) | 💰💰 | 부분 | L1(부분) | L2~L5 남음(fix20 정렬만) |
 > | `rambdaA/data_guard.py`/`s3_keys.py` | 💰 | 08-03 | L1,L2 | L3 남음(신규 fix22) |
@@ -143,9 +143,8 @@
 
 > **다음 감사 후보(우선순):**
 > ~~① 관측 2종(#OPEN-S·#OPEN-B)~~ → **fix32 완료.** 이제 표본이 쌓이길 기다릴 뿐 조치 없음.
-> ⓪ **#OPEN-CI rambdaA 배포 — 코드 작업이 아니라 배포만 남음(사용자 승인 대기).** 2026-09-15 실증:
->    실계좌 rambdaA는 **fix22(08-03 13:43Z)에서 멈춰 있고** fix24·25·26 가드가 6주째 없다.
->    배포 회귀 점검 완료(아래 #OPEN-CI). 월 14:00 Lambda A 실행 전에 배포·확인할 것 →
+> ~~⓪ #OPEN-CI rambdaA 배포~~ → **2026-09-15 배포 완료(v1.0.20260915.3).** 남은 확인: 09-21 첫 실행 로그의
+>    `유니버스 커버리지:`·`신선도 미달 제외:` 출력(fix26 실환경 첫 동작) + 배포 역할 조회 권한 추가 →
 > ① **#OPEN-B 경보 설계 보강 — 남은 절반(B-2)**. 2026-09-14 패스에서 **B-1(감시기 생존
 >    관측)만 종결**했다. 상관 단독 임계로는 8/22 괴리를 못 잡는다는 본래 결함은 그대로다:
 >    `proxy_beta`는 여전히 **기록만 되고 어디서도 소비되지 않는다**(fix40 시점 grep 전수 확인).
@@ -286,6 +285,12 @@
   배포 역할은 `UpdateFunctionCode`만 가진다 — **배포는 가능하나 배포 결과를 볼 수 없는 구조**(#OPEN-CI 근본원인 그대로).
   **rambdaA 배포 보류 — 사용자 콘솔 확인(`signal_generator_v2` 마지막 수정) 또는 IAM 조회 권한 추가 대기.**
   2026-09-21(월) 14:00 KST Lambda A 실행 전 처리 필요.
+  **▶ 2026-09-15 배포 완료 — rambdaA 부분 해소.** 사용자가 콘솔에서 `signal_generator.py` 헤더 `버전: v1.0.20260803.1`을
+  확인(`git grep` 대조: fix22 커밋의 signal_generator.py에만 있는 문자열) → 판단 확정 후 헤더만 갱신한 커밋 `9f6a8f2`로 배포.
+  run 34863827871: test 204 OK → `deploy-rambda-a` success. AWS 응답 `LastModified 2026-09-14T15:42:06Z`(=09-15 00:42 KST),
+  `CodeSha256 As/TNx/sh4rfpfTj/1uxIsbp+TwKRVpy0pjMGTMzWvc=`, 응답 시점 `LastUpdateStatus: InProgress`(Successful 전이는 권한 부재로 미확인).
+  *남은 것:* ① 콘솔 헤더 v1.0.20260915.3 확인 ② 09-21 첫 실행 CloudWatch 로그에서 fix24·26 출력 확인
+  ③ 배포 역할에 `lambda:GetFunctionConfiguration` 부재 — **배포 결과 관측 수단은 여전히 없다(재발 방지 미해소).**
 - **#OPEN-C 테스트 환경에서 `config` 이름 충돌** (2026-08-24 발견, 미조치) —
   `rambdaA/config.py`와 `rambdaB/config.py`가 **둘 다 `config`로** import돼
   `sys.modules`에서 충돌한다. 먼저 로드된 쪽이 이긴다. 실제 Lambda는 각자 자기 것만
@@ -414,6 +419,7 @@
 | fix39 | **[판정 기준 부재]** STEP B는 "신호가 죽었나", STEP D는 "가드를 바꿀까"에 답하는데 **"실계좌에 자본을 계속 태울 것인가"에는 기준이 아예 없었다.** 기준 없이 손실 구간을 지나면 판단이 그때의 손실 크기에 끌려간다([[signal-tuning-freeze]]의 실패 경로). 게다가 수익률로 판정하려 들면 실측 t=−0.51 / σ=4.67%p라 **약 169주**가 필요해 26주 안엔 아무 답도 안 나온다 | AUDIT ③에 **STEP E** 신설: 판정 축을 수익률이 아니라 **구조적 증거**로 고정. 관측 창은 STEP B와 같은 시계(08-03~26주, 예상 2027-02-01), 조기 중단선 3개(①실행 무결성 1건이라도 ②`proxy_corr<0.80` 2주 연속 ③13주 시점 스프레드 누적 <−10%p), 26주 판단 매트릭스와 `CASH_RESERVE` 고정 의무 명시. `backtest/live_gate.py`(`ExecutionIntegrityCheck`/`LiveTradingGate`) + 텔레그램 섹션 + CI 단계 | 20260908.1 | **V2** (오탐/미탐 양방향 32건 — BEAR 0건·밴드스킵·테스트모드·창이전사고·상관결측을 중단으로 오인하지 않는지, 13주/26주 조기판정 금지 경계) |
 | fix40 | **[L6ⓓ #OPEN-B 절반]** 대리지표 감시기가 죽어도(`measure()`→None) 세 소비처가 모두 조용히 무시했다. `live_gate`는 **마지막 非None 값을 현재값처럼** 표시하고 결측이 breach 연속을 끊어 **②번 중단선이 구조적으로 발동 불가**. 3주 연속 결측을 합성하니 '상관 0.96 · 판정 계속'이 출력 — 죽은 감시기가 '정상'으로 읽히는 fail-open. fix39가 이 결함 있는 상관-단독 설계를 그대로 물려받아 실계좌 계속/중단 판정까지 오염 | `proxy_stale_weeks()`/`last_measured_proxy()` 신설, `verdict.proxy`에 `measured`/`stale_weeks`/`last_corr_asof` 노출, 2주 연속 결측 시 경보(②번과 동일 기준), 콘솔·텔레그램 서식 분리. **사전 고정 임계는 무변경** — 감시 중단은 경보일 뿐 중단선 아님 | 20260915.1 | **V2** (구버전 대비 6/10 실패로 변이-구별 확인. 오탐방지 4건은 양쪽 통과) |
 | ci | **[#OPEN-CI2]** CI 테스트가 `rambdaA/B` 변경에만 걸려 fix39·fix40이 **CI 검증 0회**로 main 반영. 섀도우 CI(`shadow.yml`)도 테스트 미실행 | `deploy.yml` 트리거에 `tests/`·`backtest/`·`strategies/` 추가, `changes`·`deploy-*` 잡을 push 한정, 읽기 전용 `lambda-status` dispatch 잡 추가(**IAM 조회 권한 부재로 미동작**) | 20260915.2 | **V1** (실 CI 런: test 204 OK·deploy skip / dispatch 런: 배포 잡 전부 skip) |
+| deploy | **[#OPEN-CI]** 실계좌 rambdaA가 fix22에 **6주간 정지** — fix24·25·26이 HISTORY '패치 완료'와 달리 미탑재. 08-24 '다음 주 배포' 3주 미이행. 원인은 배포 결과를 볼 수단 부재 | 사용자 콘솔 헤더로 fix22 확정 → 헤더만 갱신한 커밋으로 배포(로직 무변경). 배포 전 실운영 7주 회귀 점검(fix24 발동 0회·VIX 이상 0회, fix26 미검증) | 20260915.3 | **V1+** (CI test 204 OK·배포 응답 LastModified 갱신. 실행 경로 실증은 09-21 로그) |
 
 ### 검증된 fail-safe 체인 (감사 시 재확인용)
 - A 실패/중단(500) → `quant_signals.json` 미갱신 → B가 `updated_at` 나이 > `SIGNAL_MAX_AGE_SECS`
