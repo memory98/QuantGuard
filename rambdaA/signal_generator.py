@@ -1,7 +1,7 @@
 """
 signal_generator.py — Lambda A: 시그널 생성기
 ========================================================
-버전: v1.0.20260803.5
+버전: v1.0.20260915.3
 실행: 매주 월요일 15:05 KST
 EventBridge: 타임존 Asia/Seoul / Cron: 5 15 ? * MON *
 Lambda 설정: Timeout 12분 / Memory 512MB
@@ -34,6 +34,12 @@ Lambda 설정: Timeout 12분 / Memory 512MB
         - s3_keys.archive_keys: force_bull(테스트) 실행은 *_test/ prefix로 격리
           → 실날짜 아카이브(quant_signals/·universe/) 오염 방지(2026-07-24 사고 대응)
         - 실행경로 단위테스트(tests/) + CI 배포 게이트 추가
+  fix24~26 실배포 (v1.0.20260915.3, 코드 무변경):
+        - fix24(유니버스 커버리지)·fix25(VIX 신선도)·fix26(모멘텀 신선도)는 2026-08-03 CI test
+          실패로 배포되지 않았고, 이후 rambdaA 커밋이 없어 실계좌는 fix22(v1.0.20260803.1)에
+          6주간 머물렀다(2026-09-15 콘솔 버전 헤더로 확인). 이 헤더 갱신은 배포 트리거용이다.
+        - 배포 확인: Lambda 콘솔에서 이 파일의 '버전:'이 v1.0.20260915.3 인지,
+          실행 로그에 '유니버스 커버리지:' / '신선도 미달 제외:' 출력이 있는지 본다.
 """
 import json
 import os
