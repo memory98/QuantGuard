@@ -51,6 +51,11 @@ jobs:
         # 매매 로직과 무관한 관측 전용. 원장은 저장소 루트(누적형이라 커밋 필요).
         run: python backtest/signal_quality.py | tee signal_quality_output.txt
 
+      - name: 실계좌 게이트 판정 (STEP E)
+        # 신호품질 원장에 live_gate 블록을 갱신한다. 반드시 signal_quality 직후 —
+        # 그 주 관측치(스프레드·대리지표 상관)를 읽어 중단선을 평가하기 때문.
+        run: python backtest/live_gate.py | tee live_gate_output.txt
+
       - name: 텔레그램 성적표 요약 (시크릿 있으면 발송, 없으면 스킵)
         env:
           TELEGRAM_TOKEN: ${{ secrets.QG_TELEGRAM_TOKEN }}

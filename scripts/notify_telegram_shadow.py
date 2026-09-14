@@ -48,6 +48,46 @@ def render_signal_quality(sq: dict | None) -> list[str]:
     return lines
 
 
+def render_live_gate(sq: dict | None) -> list[str]:
+    """STEP E 실계좌 게이트. 판정 전에는 **중단선 3개의 진행도만** 보인다.
+
+    수익률은 일부러 넣지 않는다 — 이 섹션은 "계속할까"를 손실 크기가 아니라
+    구조적 증거로 판단하게 만드는 게 목적이라, 같은 화면에 수익률을 붙이면
+    그 목적이 무너진다(AUDIT.md ③ STEP E).
+    """
+    g = (sq or {}).get("live_gate")
+    if not g:
+        return []
+    status = g.get("status", "?")
+    lines = ["", "── 실계좌 게이트(STEP E) ──"]
+
+    eta = g.get("eta")
+    lines.append(f"• 진행: {g.get('weeks', 0)}/{g.get('horizon_weeks', 26)}주"
+                 + (f" (예상 {eta})" if eta else ""))
+
+    n_viol = len(g.get("execution", {}).get("violations", []))
+    lines.append(f"• ① 실행 무결성: {'정상' if n_viol == 0 else f'위반 {n_viol}건'}")
+
+    p = g.get("proxy", {})
+    corr = p.get("last_corr")
+    lines.append(f"• ② 대리지표 상관: {corr:.2f} (바닥 {p.get('floor')}, "
+                 f"연속 {p.get('breach_streak', 0)}/{p.get('need_streak', 2)}주)"
+                 if corr is not None else "• ② 대리지표 상관: 측정 불가")
+
+    m = g.get("midpoint", {})
+    tail = "" if m.get("reached") else f" — {m.get('weeks')}주 시점에 판정"
+    lines.append(f"• ③ 신호 조기사망: 스프레드 누적 {m.get('spread_cum_pct', 0):+.2f}%p "
+                 f"(바닥 {m.get('floor_pct')}%p){tail}")
+
+    if status == "RUNNING":
+        lines.append("• 판정: 계속 — 중단선 미발동")
+    elif status == "HORIZON_REACHED":
+        lines.append("• 판정: 26주 도달 — STEP E ④ 최종 결정 필요")
+    else:
+        lines.append(f"🛑 판정: {status} — {g.get('note', '')}")
+    return lines
+
+
 def render_account(ledger: dict) -> str:
     """실계좌 줄 렌더링. account_pct는 None일 수 있다(채점 가능한 구간 0개).
 
@@ -88,6 +128,7 @@ def main():
         except json.JSONDecodeError:
             print("⚠️ 신호품질 원장 파손 → 해당 섹션 생략")
     lines += render_signal_quality(sq)
+    lines += render_live_gate(sq)
 
     note = d.get("note", "")
     if note:
