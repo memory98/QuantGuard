@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-21 13:47:51",
+  "generated_at": "2026-09-28 15:03:15",
   "source": "universe",
   "intervals": [
     {
@@ -113,18 +113,34 @@
       "baseline+해외분리": 5.7,
       "benchmark": 5.97,
       "account": 1.51
+    },
+    {
+      "from": "2026-09-21",
+      "to": "2026-09-28",
+      "dd_min": -0.001963,
+      "baseline(DD가드)": 0.8,
+      "concentrated(DD가드)": 2.63,
+      "voltilt(DD가드)": 2.77,
+      "baseline+콤보가드": 0.73,
+      "baseline+σ임계가드": 0.8,
+      "baseline+일간비상": 0.8,
+      "baseline+σ재보정": 0.8,
+      "baseline+해외1": 1.5,
+      "baseline+해외분리": 1.01,
+      "benchmark": 1.29,
+      "account": 0.33
     }
   ],
   "cumulative": {
-    "baseline(DD가드)": -1.12,
-    "concentrated(DD가드)": -0.53,
-    "voltilt(DD가드)": -1.56,
-    "baseline+콤보가드": -7.33,
-    "baseline+σ임계가드": 5.85,
-    "baseline+일간비상": -1.12,
-    "baseline+σ재보정": 10.17,
-    "baseline+해외1": -0.98,
-    "baseline+해외분리": -1.35
+    "baseline(DD가드)": -0.32,
+    "concentrated(DD가드)": 2.09,
+    "voltilt(DD가드)": 1.16,
+    "baseline+콤보가드": -6.66,
+    "baseline+σ임계가드": 6.7,
+    "baseline+일간비상": -0.32,
+    "baseline+σ재보정": 11.06,
+    "baseline+해외1": 0.5,
+    "baseline+해외분리": -0.35
   },
   "guard_specs": {
     "baseline(DD가드)": {
@@ -459,8 +475,8 @@
       }
     }
   },
-  "benchmark_pct": 12.71,
-  "account_pct": -1.39,
-  "account_intervals": 7,
+  "benchmark_pct": 14.17,
+  "account_pct": -1.06,
+  "account_intervals": 8,
   "note": "폴백(top_10) 구간은 백테스트 부트스트랩. 진짜 전진 OOS는 universe 스냅샷 누적(2026-08-03~)부터."
 }
