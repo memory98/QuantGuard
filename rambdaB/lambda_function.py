@@ -1,6 +1,10 @@
 # lambda_function.py — Lambda B: 메인 제어 타워
-# 버전: v1.0.20260804.3 (fix30 조용한 스킵 관측성 — STALE/S3_ERROR/NO_TARGETS 텔레그램 경고)
+# 버전: v1.0.20260929.2 (fix42 테스트 아카이브 격리 — #OPEN-ISO)
 # [변경 이력]
+#   fix42   : [#OPEN-ISO] 테스트 실행(FORCE_TEST_MODE=True)이 실전 키에 기록해
+#             fix15 중복 가드를 밟고 **그 주 정기 리밸런싱을 차단**시킬 수 있던 결함 제거.
+#             쓰기는 s3_keys.archive_keys()로 *_test 격리, 중복 가드는 실전 키만 조회.
+#             (rambdaA는 fix22에서 이미 격리됨 — B에만 없던 것을 맞춤)
 #   기능 1  : 주문 집행 완료 후 텔레그램 영수증 발송
 #   기능 2  : 핵심 로직 전체 try-except + traceback 텔레그램 에러 자백
 #   기능 3  : CASH_RESERVE 현금 방화벽
@@ -24,6 +28,7 @@ from config import (
     FORCE_TEST_MODE,
     TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
 )
+from archive_keys import archive_keys, live_archive_key  # [fix42] 테스트 아카이브 격리(#OPEN-ISO)
 # [fix23] 공통 함수 통합(중복 제거) — usa.py 연동 execute_order 포함
 from kis_common import get_tick_size, calc_limit_price, execute_order  # noqa: F401
 from korea import run_korea_rebalancing
@@ -288,12 +293,19 @@ def lambda_handler(event, context):
 
     s3 = boto3.client("s3")
 
+    # [fix42] 쓰기 키 결정 — 테스트 실행은 *_test 로 격리해 실전 이력·중복 가드를 오염하지 않는다.
+    # 읽기(prev_equity)는 격리하지 않는다: 테스트도 직전 실전 스냅샷을 봐야 검증이 현실적이다.
+    latest_key, archive_key = archive_keys(korea_time.strftime("%Y-%m-%d"), FORCE_TEST_MODE)
+    if FORCE_TEST_MODE:
+        print(f"🧪 테스트 모드 → S3 기록 격리: {latest_key} / {archive_key}")
+
     # [fix15] 같은 날 중복 실행 가드
     # 2026-06-30 사고: 장중 수동 TEST 호출로 실전 주문 로직이 그대로 발사됨.
     # 오늘자 아카이브가 이미 있으면(=오늘 이미 실행됨) 재실행을 차단한다.
     # 의도적 재실행은 테스트 이벤트에 {"force_run": true}를 넣어 우회.
+    # [fix42] 가드는 항상 '실전' 아카이브만 본다 — 테스트 기록은 차단 근거가 아니다(#OPEN-ISO)
     if not (isinstance(event, dict) and event.get("force_run")):
-        today_archive_key = f"latest_signal/{korea_time.strftime('%Y-%m-%d')}.json"
+        today_archive_key = live_archive_key(korea_time.strftime('%Y-%m-%d'))
         try:
             s3.head_object(Bucket=S3_BUCKET_NAME, Key=today_archive_key)
             msg = (f"⛔ 오늘({korea_time.strftime('%Y-%m-%d')}) 이미 실행된 기록"
@@ -344,6 +356,7 @@ def lambda_handler(event, context):
         # [fix15] 주간 수익률: 직전 실행 시점의 총자산과 단순 비교 (입출금 미반영)
         prev_equity, prev_date = None, None
         try:
+            # [fix42] 읽기는 항상 실전 최신본 — 테스트도 실제 직전 스냅샷 기준으로 검증한다
             _prev_obj  = s3.get_object(Bucket=S3_BUCKET_NAME, Key=SIGNAL_FILE_KEY)
             _prev_data = json.loads(_prev_obj["Body"].read().decode("utf-8"))
             prev_equity = _prev_data.get("total_equity_checked")
@@ -437,9 +450,8 @@ def lambda_handler(event, context):
             }
             body_bear = json.dumps(output_signal, ensure_ascii=False, indent=2)
             # ① 최신본 (덮어쓰기)
-            s3.put_object(Bucket=S3_BUCKET_NAME, Key=SIGNAL_FILE_KEY, Body=body_bear)
+            s3.put_object(Bucket=S3_BUCKET_NAME, Key=latest_key, Body=body_bear)
             # ② 날짜별 아카이브
-            archive_key = f"latest_signal/{korea_time.strftime('%Y-%m-%d')}.json"
             s3.put_object(Bucket=S3_BUCKET_NAME, Key=archive_key, Body=body_bear)
             print(f"✅ S3 아카이브 완료: {archive_key}")
             report = build_execution_report(
@@ -492,9 +504,8 @@ def lambda_handler(event, context):
         }
         body_bull = json.dumps(output_signal, ensure_ascii=False, indent=2)
         # ① 최신본 (덮어쓰기)
-        s3.put_object(Bucket=S3_BUCKET_NAME, Key=SIGNAL_FILE_KEY, Body=body_bull)
+        s3.put_object(Bucket=S3_BUCKET_NAME, Key=latest_key, Body=body_bull)
         # ② 날짜별 아카이브
-        archive_key = f"latest_signal/{korea_time.strftime('%Y-%m-%d')}.json"
         s3.put_object(Bucket=S3_BUCKET_NAME, Key=archive_key, Body=body_bull)
         print(f"✅ S3 아카이브 완료: {archive_key}")
 

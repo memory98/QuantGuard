@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # analyze_returns.py — S3 시그널 아카이브 기반 상대수익률 분석
-# 버전: v1.0.20260710.1
+# 버전: v1.0.20260929.1
+#
+# 수정 이력:
+#   fix41(2026-09-29, #OPEN-BM): 벤치마크·종목 가격 조회가 '요청한 날짜의 종가'인지 검증하지
+#     않고 마지막 유효 종가를 조용히 대체하던 결함 제거. 요청일 바가 없으면 해당 구간을
+#     provisional(잠정)으로 표기한다. 사고: 2026-09-28 주간분석에서 40분 간격 두 실행이
+#     야후 지연 때문에 벤치 -1.97% / +1.29%로 갈려 상대수익률 부호가 뒤집혔다(3.26%p).
 #
 # 전제: data/s3_archive/latest_signal/*.json 이 `aws s3 sync`로 최신 상태여야 함
 #   aws s3 sync s3://eunsung-quant-guard-bucket/latest_signal/ data/s3_archive/latest_signal/ --profile quantguard-ro
@@ -24,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "rambdaA"))
 import yf  # 기존 커스텀 야후 파이낸스 모듈 재사용 (신규 의존성 없음)
+from data_guard import validate_prices  # [fix41] 시계열 정합성 검증 단일 소스(rambdaA와 공유)
 
 BENCHMARK_TICKER = "069500"  # KODEX 200 — KOSPI200 추종 ETF, 벤치마크로 사용
 ARCHIVE_DIR = Path(__file__).resolve().parent.parent / "data" / "s3_archive" / "latest_signal"
@@ -68,8 +75,50 @@ class SignalArchive:
         return runs
 
 
+class PricePoint:
+    """[fix41] 시계열 조회 결과 — 값과 '그 값이 어느 날 종가인지'를 함께 들고 다닌다.
+
+    기존 코드는 float만 반환해 호출부가 신선도를 알 수 없었다(#OPEN-BM). 요청일과
+    실제 종가일이 다르면 `is_exact`가 False이고, 호출부는 그 구간을 잠정으로 표기한다.
+    """
+
+    __slots__ = ("value", "as_of", "requested")
+
+    def __init__(self, value: float, as_of, requested):
+        self.value = float(value)
+        self.as_of = as_of
+        self.requested = requested
+
+    @property
+    def is_exact(self) -> bool:
+        """요청한 날짜 자체의 종가인가. 아니면 과거 종가로 대체된 것."""
+        return self.as_of.date() == self.requested.date()
+
+    @property
+    def stale_days(self) -> int:
+        return (self.requested.date() - self.as_of.date()).days
+
+    def __repr__(self):
+        return f"PricePoint({self.value:,.0f} @{self.as_of.date()} req={self.requested.date()})"
+
+
+def last_close_on_or_before(series, requested):
+    """[fix41] 요청일 이하 마지막 유효 종가를 PricePoint로 반환. 없으면 None.
+
+    벤치마크와 개별 종목이 같은 조회 규칙을 쓰도록 단일 소스로 둔다.
+    """
+    import pandas as pd
+    s = series[series.index <= pd.Timestamp(requested)].dropna()
+    if s.empty:
+        return None
+    return PricePoint(float(s.iloc[-1]), s.index[-1].to_pydatetime(), requested)
+
+
 class BenchmarkFetcher:
     """KOSPI200 추종 ETF 가격 시계열 조회 (rambdaA/yf.py 재사용)."""
+
+    # 시계열 전체가 이 일수 넘게 낡으면 피드 중단으로 보고 거부(구간별 잠정 판정과는 별개)
+    MAX_SERIES_STALE_DAYS = 10
 
     def __init__(self, ticker: str = BENCHMARK_TICKER):
         self.ticker = ticker
@@ -79,16 +128,32 @@ class BenchmarkFetcher:
         df = yf.download(self.ticker, start=start, end=end)
         if df.empty:
             raise RuntimeError(f"벤치마크({self.ticker}) 가격 조회 실패 — 야후 API 응답 없음")
-        self._prices = df["Close"] if "Close" in df.columns else df.iloc[:, 0]
+        prices = df["Close"] if "Close" in df.columns else df.iloc[:, 0]
+        self._prices = prices
+        # [fix41] 시계열 자체의 정합성(행수·비정상값·미래날짜)은 rambdaA와 같은 검증기로.
+        # 구간별 신선도는 price_on_or_before의 is_exact가 따로 판정한다.
+        valid = prices.dropna()
+        if valid.empty:
+            raise RuntimeError(f"벤치마크({self.ticker}) 유효 종가 0건 — 야후 응답 이상")
+        ok, reason = validate_prices(
+            last_date=valid.index[-1].to_pydatetime(), num_rows=len(valid),
+            last_value=float(valid.iloc[-1]), as_of=end,
+            min_rows=2, max_stale_days=self.MAX_SERIES_STALE_DAYS)
+        if not ok:
+            raise RuntimeError(f"벤치마크({self.ticker}) 시계열 검증 실패 — {reason}")
 
-    def price_on_or_before(self, date: datetime):
-        """해당 날짜 이하 가장 최근 거래일 종가 (휴장일 보정)."""
+    def price_on_or_before(self, date: datetime) -> PricePoint:
+        """해당 날짜 이하 가장 최근 거래일 종가를 PricePoint로 반환 (휴장일 보정).
+
+        [fix41] float이 아니라 PricePoint를 돌려준다. 호출부는 `is_exact`로
+        '요청일 종가인지, 과거 값으로 대체된 것인지'를 반드시 구분해야 한다.
+        """
         if self._prices is None:
             raise RuntimeError("가격 데이터 미로드 — fetch_range() 먼저 호출할 것")
-        series = self._prices[self._prices.index <= date].dropna()
-        if series.empty:
+        point = last_close_on_or_before(self._prices, date)
+        if point is None:
             raise RuntimeError(f"{date.date()} 이전 벤치마크 가격 없음")
-        return float(series.iloc[-1])
+        return point
 
     def fetch_range(self, start: datetime, end: datetime):
         self._load(start, end)
@@ -121,26 +186,35 @@ class ReturnAnalyzer:
 
         BEAR로 현금 대피한 주에 '샀으면 얼마였나'를 정량화 → 가드가 아낀(또는 놓친) 크기.
         시그널 파일: 엔트리 실행일(월) 직전 금요일 기준 quant_signals/<금요일>.json 의 top_10_stocks.
+
+        [fix41] (수익률, 신선도미달_종목코드들) 튜플을 반환한다. 벤치마크와 같은 이유로,
+        요청일 종가가 아직 없으면 조용히 과거 종가로 계산되던 것을 호출부에 알린다.
         """
         import pandas as pd
         lf = entry_dt - timedelta(days=(entry_dt.weekday() - 4) % 7)
         f = QUANT_DIR / f"{lf:%Y-%m-%d}.json"
         if not f.exists():
-            return None
+            return None, []
         try:
             picks = json.loads(f.read_text(encoding="utf-8")).get("top_10_stocks", [])
         except Exception:
-            return None
+            return None, []
         rets = []
+        stale_codes = []       # [fix41] 요청일 종가가 없어 과거 값으로 대체된 종목
         for p in picks:
             s = self._price_series(p["code"])
             if s is None or len(s) == 0:
                 continue
-            a = s[s.index <= pd.Timestamp(entry_dt)]
-            b = s[s.index <= pd.Timestamp(exit_dt)]
-            if len(a) and len(b) and float(a.iloc[-1]) > 0:
-                rets.append(float(b.iloc[-1]) / float(a.iloc[-1]) - 1)
-        return sum(rets) / len(rets) if rets else None
+            a = last_close_on_or_before(s, entry_dt)
+            b = last_close_on_or_before(s, exit_dt)
+            if a is None or b is None or a.value <= 0:
+                continue
+            if not (a.is_exact and b.is_exact):
+                stale_codes.append(p["code"])
+            rets.append(b.value / a.value - 1)
+        if not rets:
+            return None, []
+        return sum(rets) / len(rets), stale_codes
 
     def compute(self) -> list:
         if len(self.runs) < 2:
@@ -165,10 +239,21 @@ class ReturnAnalyzer:
 
             bench_prev = self.benchmark.price_on_or_before(prev_dt)
             bench_curr = self.benchmark.price_on_or_before(curr_dt)
-            benchmark_return = bench_curr / bench_prev - 1
+            benchmark_return = bench_curr.value / bench_prev.value - 1
+
+            # [fix41] 요청일 종가가 아니면 이 구간 수치는 확정이 아니다(#OPEN-BM).
+            # 조용히 과거 종가로 대체하지 않고 잠정으로 표기해 기록 단계에서 걸러지게 한다.
+            reasons = []
+            for label, pt in (("기초", bench_prev), ("기말", bench_curr)):
+                if not pt.is_exact:
+                    reasons.append(f"벤치마크 {label}({pt.requested.date()}) 종가 없음 → "
+                                   f"{pt.as_of.date()} 종가로 대체({pt.stale_days}일 전)")
 
             # [반사실] 이 구간에 top10을 매수했다면(가드 없었을 때)
-            if_inv = self._if_invested(prev_dt, curr_dt)
+            if_inv, stale_codes = self._if_invested(prev_dt, curr_dt)
+            if stale_codes:
+                reasons.append(f"매수했으면 산정: {len(stale_codes)}개 종목이 요청일 종가 없음 "
+                               f"({','.join(stale_codes[:3])}{'...' if len(stale_codes) > 3 else ''})")
             # 가드효과 = 실제(현금/보유) - 매수했을때. +면 가드가 손실을 아낌
             guard_effect = (portfolio_return - if_inv) if if_inv is not None else None
 
@@ -183,6 +268,11 @@ class ReturnAnalyzer:
                 "net_deposit": deposit,
                 "prev_equity": prev_eq,
                 "curr_equity": curr_eq,
+                # [fix41] True면 확정치가 아님 — Notion/HISTORY 기록 시 잠정 표기 필수
+                "provisional": bool(reasons),
+                "provisional_reason": "; ".join(reasons) if reasons else None,
+                "benchmark_asof": {"from": bench_prev.as_of.strftime("%Y-%m-%d"),
+                                   "to": bench_curr.as_of.strftime("%Y-%m-%d")},
             })
         return results
 
@@ -219,9 +309,18 @@ def main():
     for r in results:
         ii = f"{r['if_invested_pct']:>+9.2f}%" if r.get('if_invested_pct') is not None else f"{'—':>10}"
         ge = f"{r['guard_effect_pct']:>+8.2f}%" if r.get('guard_effect_pct') is not None else f"{'—':>9}"
+        mark = "  ⚠️ 잠정" if r.get("provisional") else ""
         print(f"{r['from'][:10]}→{r['to'][:10]:<12} "
               f"{r['portfolio_return_pct']:>+9.2f}% {r['benchmark_return_pct']:>+9.2f}% "
-              f"{r['relative_return_pct']:>+8.2f}% {ii} {ge}")
+              f"{r['relative_return_pct']:>+8.2f}% {ii} {ge}{mark}")
+
+    # [fix41] 잠정 구간은 확정치가 아니므로 기록 전에 반드시 눈에 띄어야 한다(#OPEN-BM).
+    provisional = [r for r in results if r.get("provisional")]
+    if provisional:
+        print(f"\n⚠️  잠정 구간 {len(provisional)}건 — 확정치 아님. Notion/HISTORY에 기록할 때")
+        print("    '잠정'을 명시하고, 종가가 게시된 뒤(보통 다음 거래일) 재실행해 갱신할 것.")
+        for r in provisional:
+            print(f"    · {r['from'][:10]}→{r['to'][:10]}: {r['provisional_reason']}")
 
     print(json.dumps(results, ensure_ascii=False, indent=2))
 
