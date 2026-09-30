@@ -149,3 +149,38 @@ class TestMisconfigGuards(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTelegramModeTag(unittest.TestCase):
+    """[fix45] 테스트 모드 알림은 실전 사고 경고와 구별돼야 한다.
+
+    구별이 없으면 '테스트하면 자주 오는 그거'로 학습해 진짜 경고를 무시하게 된다(경보 피로).
+    발송 직전 choke point에서 붙이므로 메시지를 새로 추가해도 태그가 누락되지 않는다.
+    """
+
+    def _send(self, test_mode, msg="🚨 시그널 만료 — 리밸런싱 스킵"):
+        sent = {}
+        class FakeResp:
+            status = 200
+            data = b"{}"
+        class FakePool:
+            def request(self, *a, **k):
+                sent["body"] = k.get("body") or (a[2] if len(a) > 2 else None)
+                return FakeResp()
+        with mock.patch.object(lf, "TELEGRAM_TOKEN", "t"), \
+             mock.patch.object(lf, "TELEGRAM_CHAT_ID", "c"), \
+             mock.patch.object(lf, "FORCE_TEST_MODE", test_mode), \
+             mock.patch.object(lf.urllib3, "PoolManager", return_value=FakePool()):
+            lf.send_telegram(msg)
+        return json.loads(sent["body"].decode("utf-8"))["text"]
+
+    def test_test_mode_message_is_tagged(self):
+        text = self._send(True)
+        self.assertIn("테스트 모드 실행", text)
+        self.assertIn("실주문 없음", text)
+        self.assertIn("시그널 만료", text, "원문이 보존돼야 한다")
+
+    def test_live_mode_message_is_untagged(self):
+        text = self._send(False)
+        self.assertNotIn("테스트 모드", text)
+        self.assertTrue(text.startswith("🚨"), "실전 경고에 군더더기가 붙었다")

@@ -1,6 +1,9 @@
 # lambda_function.py — Lambda B: 메인 제어 타워
-# 버전: v1.0.20260930.2 (fix44a 경고 메시지의 복구 안내 모호성 제거)
+# 버전: v1.0.20260930.3 (fix45 테스트 모드 알림 태그 — 실전 경고와 구별)
 # [변경 이력]
+#   fix45   : 테스트 모드에서 나가는 텔레그램에 '[테스트 모드 실행]' 태그 부착.
+#             콘솔 테스트가 낸 경고가 실전 사고 경고와 구별되지 않아, 진짜 경고를
+#             무시하게 되는 경보 피로 위험이 있었다(발송 choke point 한 곳에서 처리).
 #   fix44a  : 위 경고의 복구 안내가 'false로 고친 뒤 테스트 이벤트 force_run으로 재실행'이라
 #             실전 복구와 콘솔 테스트를 뒤섞어, 테스트하는 줄 알고 실주문을 낼 수 있었다.
 #             두 경로를 분리 서술하고 실주문 경고를 명시(force_run도 불필요해 제거).
@@ -55,6 +58,13 @@ def send_telegram(message: str) -> None:
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("⚠️ 텔레그램 설정 미완료 → 알림 스킵")
         return
+    # [fix45] 테스트 모드 실행에서 나간 알림에는 태그를 붙인다.
+    # 그렇지 않으면 콘솔 테스트가 낸 경고("이번 주 매매를 건너뛰고 포지션 유지")가
+    # 실전 사고 경고와 구별되지 않는다. ① 테스트 경고를 실사고로 오해하거나
+    # ② 반대로 '테스트하면 자주 오는 그거'로 학습해 **진짜 경고를 무시**하게 된다
+    # (경보 피로 — 후자가 더 위험). 발송 직전 한 곳에서 처리해 누락을 원천 차단한다.
+    if FORCE_TEST_MODE:
+        message = "🧪 <b>[테스트 모드 실행 — 실주문 없음]</b>\n" + message
     try:
         http = urllib3.PoolManager()
         url  = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
