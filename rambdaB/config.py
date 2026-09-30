@@ -44,12 +44,40 @@ EXEC_AUDIT_ENABLED = os.environ.get("EXEC_AUDIT_ENABLED", "false").strip().lower
 # 봇이 절대 건드리지 않는 격리 현금액 (단위: 원), 기본값 0 = 전액 운용
 CASH_RESERVE = int(os.environ.get("CASH_RESERVE", "0"))
 
-# ── 강제 가상 테스트 모드 마스터 스위치 ─────────────────────
+# ── 강제 가상 테스트 모드 마스터 스위치 (환경변수) ──────────
 # True  → 주문 API 전송만 차단(Mock), 나머지 전 공정 100% 정상 실행
 # False → 실전 모드, 실제 KIS API로 주문 전송
-# ⚠️ 배포 전 반드시 False로 변경할 것!
 # [2026-07-27] 재진입(BULL 매수) 경로 실계좌 검증 완료 → 실전 모드 복원.
-FORCE_TEST_MODE = False
+# [fix44 2026-09-30] 하드코딩 상수였던 것을 환경변수로 전환.
+#   이전엔 콘솔 테스트를 하려면 True로 고쳐 배포 → 테스트 → False로 되돌려 재배포가
+#   필요했고, 되돌리기를 놓치면 **그 주 정기 실행이 Mock으로 돌아** 리밸런싱이
+#   누락됐다(BEAR 주면 대피 매도 미실행). 이제 콘솔에서 값만 바꾸면 되고 배포가 없다.
+def _env_flag(name: str, default: bool) -> tuple:
+    """[fix44] 환경변수 → bool. (값, 해석불가여부) 반환.
+
+    해석 불가한 값(오타 등)은 **주문이 나가지 않는 쪽(True)** 으로 떨어뜨리고 invalid를
+    표시한다. 호출부(lambda_function)가 이를 보고 매매를 중단하고 텔레그램으로 알린다 —
+    이 스위치는 실주문 여부를 가르므로 추측으로 진행하면 안 된다.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default, False
+    v = raw.strip().lower()
+    if v in ("true", "1", "yes", "on"):
+        return True, False
+    if v in ("false", "0", "no", "off"):
+        return False, False
+    return True, True
+
+
+# [fix44] 하드코딩 상수 → 환경변수. 콘솔 테스트를 위해 코드를 고치고 배포하던 절차를 없앤다
+# (되돌리기를 놓치면 그 주 실전 실행이 Mock으로 돌아가는 위험이 있었다).
+#   미설정  → False(실전). 기존 배포본과 동일하게 동작하므로 콘솔 설정 없이도 안전하다.
+#   True/1/yes/on → 테스트 모드(주문 Mock). 콘솔에서 값만 바꾸면 되고 배포가 필요 없다.
+#   해석 불가 값 → 테스트 모드로 떨어뜨리고 매매 중단 + 텔레그램 경고(조용한 오판 금지).
+# ⚠️ 정기 실행(월 14:20, force_run 없음)이 테스트 모드로 돌면 lambda_function이 매매를
+#    중단하고 경고한다 — '되돌리기 누락'을 그 주에 바로 알 수 있게 하기 위한 장치.
+FORCE_TEST_MODE, FORCE_TEST_MODE_INVALID = _env_flag("FORCE_TEST_MODE", False)
 
 # ── Lambda 스케줄 (EventBridge 설정 참고용) ──────────────────
 # [fix15] 권장 시각 변경: 15:15는 동시호가(15:20~15:30) 직전이라 연속거래가

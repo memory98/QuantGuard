@@ -1,6 +1,9 @@
 # lambda_function.py — Lambda B: 메인 제어 타워
-# 버전: v1.0.20260929.2 (fix42 테스트 아카이브 격리 — #OPEN-ISO)
+# 버전: v1.0.20260930.1 (fix44 FORCE_TEST_MODE 환경변수화 + 오설정 방어)
 # [변경 이력]
+#   fix44   : FORCE_TEST_MODE를 환경변수로 전환(배포 없이 콘솔에서 전환). 오설정 방어 2종 —
+#             해석불가 값이면 매매 중단+경고, 정기 실행이 테스트 모드로 오면 매매 중단+경고
+#             ('되돌리기 누락'으로 한 주 리밸런싱이 조용히 사라지는 것 방지).
 #   fix42   : [#OPEN-ISO] 테스트 실행(FORCE_TEST_MODE=True)이 실전 키에 기록해
 #             fix15 중복 가드를 밟고 **그 주 정기 리밸런싱을 차단**시킬 수 있던 결함 제거.
 #             쓰기는 s3_keys.archive_keys()로 *_test 격리, 중복 가드는 실전 키만 조회.
@@ -24,6 +27,7 @@ import boto3
 from config import (
     KIS_APPKEY, KIS_APPSECRET, KIS_ACCOUNT, KIS_PRDT_CODE,
     URL_BASE, S3_BUCKET_NAME, SIGNAL_FILE_KEY,
+    FORCE_TEST_MODE_INVALID,
     CASH_RESERVE,
     FORCE_TEST_MODE,
     TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
@@ -290,6 +294,33 @@ def lambda_handler(event, context):
     mode_label = "🧪 테스트 모드 (주문 Mock)" if FORCE_TEST_MODE else "🚀 실전 모드 (실제 주문)"
     print(f"🕐 실행 시각 (KST): {now_str}")
     print(f"⚙️ FORCE_TEST_MODE: {FORCE_TEST_MODE} → {mode_label}")
+
+    # [fix44] 스위치 오설정 방어 — 이 값이 실주문 여부를 가르므로 추측으로 진행하지 않는다.
+    # ① 해석 불가한 값(오타 등): 주문 없는 쪽으로 떨어져 있으나, 그대로 Mock 실행하면
+    #    사용자는 실매매가 된 줄 안다 → 매매를 중단하고 알린다.
+    if FORCE_TEST_MODE_INVALID:
+        msg = ("⚠️ <b>[QuantGuard] FORCE_TEST_MODE 값 해석 불가</b>\n"
+               "환경변수 FORCE_TEST_MODE에 true/false 로 읽을 수 없는 값이 들어 있습니다.\n"
+               "실주문 여부를 추측할 수 없어 이번 실행을 중단했습니다(주문 없음).\n"
+               "Lambda 콘솔에서 값을 true 또는 false 로 고친 뒤 다시 실행하세요.")
+        print("⛔ FORCE_TEST_MODE 해석 불가 → 매매 중단")
+        send_telegram(msg)
+        return {"statusCode": 200, "body": json.dumps(
+            {"result": "FORCE_TEST_MODE_INVALID"}, ensure_ascii=False)}
+
+    # ② 정기 실행(force_run 없음)이 테스트 모드로 돌아온 경우 = 콘솔 테스트 후 되돌리기 누락.
+    #    Mock으로 완주해버리면 '그 주 리밸런싱이 없었다'는 사실이 묻힌다 → 중단하고 알린다.
+    if FORCE_TEST_MODE and not (isinstance(event, dict) and event.get("force_run")):
+        msg = ("🚨 <b>[QuantGuard] 정기 실행이 테스트 모드입니다 — 리밸런싱 중단</b>\n"
+               "FORCE_TEST_MODE=True 상태로 스케줄 실행이 들어왔습니다. 콘솔 테스트 후 "
+               "되돌리지 않았을 가능성이 높습니다.\n"
+               "실주문이 나가지 않는 상태로 한 주를 넘기지 않도록 이번 실행을 중단했습니다.\n"
+               "Lambda 콘솔에서 FORCE_TEST_MODE=false 로 고친 뒤 "
+               '테스트 이벤트 {"force_run": true} 로 재실행하세요.')
+        print("⛔ 정기 실행 + 테스트 모드 → 매매 중단(되돌리기 누락 의심)")
+        send_telegram(msg)
+        return {"statusCode": 200, "body": json.dumps(
+            {"result": "TEST_MODE_ON_SCHEDULED_RUN"}, ensure_ascii=False)}
 
     s3 = boto3.client("s3")
 
