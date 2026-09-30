@@ -1,6 +1,9 @@
 # lambda_function.py — Lambda B: 메인 제어 타워
-# 버전: v1.0.20260930.1 (fix44 FORCE_TEST_MODE 환경변수화 + 오설정 방어)
+# 버전: v1.0.20260930.2 (fix44a 경고 메시지의 복구 안내 모호성 제거)
 # [변경 이력]
+#   fix44a  : 위 경고의 복구 안내가 'false로 고친 뒤 테스트 이벤트 force_run으로 재실행'이라
+#             실전 복구와 콘솔 테스트를 뒤섞어, 테스트하는 줄 알고 실주문을 낼 수 있었다.
+#             두 경로를 분리 서술하고 실주문 경고를 명시(force_run도 불필요해 제거).
 #   fix44   : FORCE_TEST_MODE를 환경변수로 전환(배포 없이 콘솔에서 전환). 오설정 방어 2종 —
 #             해석불가 값이면 매매 중단+경고, 정기 실행이 테스트 모드로 오면 매매 중단+경고
 #             ('되돌리기 누락'으로 한 주 리밸런싱이 조용히 사라지는 것 방지).
@@ -314,9 +317,11 @@ def lambda_handler(event, context):
         msg = ("🚨 <b>[QuantGuard] 정기 실행이 테스트 모드입니다 — 리밸런싱 중단</b>\n"
                "FORCE_TEST_MODE=True 상태로 스케줄 실행이 들어왔습니다. 콘솔 테스트 후 "
                "되돌리지 않았을 가능성이 높습니다.\n"
-               "실주문이 나가지 않는 상태로 한 주를 넘기지 않도록 이번 실행을 중단했습니다.\n"
-               "Lambda 콘솔에서 FORCE_TEST_MODE=false 로 고친 뒤 "
-               '테스트 이벤트 {"force_run": true} 로 재실행하세요.')
+               "실주문이 나가지 않는 상태로 한 주를 넘기지 않도록 이번 실행을 중단했습니다.\n\n"
+               "<b>이번 주 리밸런싱을 복구하려면</b> (실제 주문이 나갑니다):\n"
+               "  환경변수 FORCE_TEST_MODE=false 로 되돌린 뒤 빈 이벤트 {} 로 수동 실행\n"
+               "<b>콘솔 테스트를 계속하려면</b> (주문 없음):\n"
+               '  FORCE_TEST_MODE=true 유지 + 이벤트 {"force_run": true}')
         print("⛔ 정기 실행 + 테스트 모드 → 매매 중단(되돌리기 누락 의심)")
         send_telegram(msg)
         return {"statusCode": 200, "body": json.dumps(

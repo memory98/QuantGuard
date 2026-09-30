@@ -123,7 +123,14 @@ class TestMisconfigGuards(unittest.TestCase):
         self.assertEqual(json.loads(res["body"])["result"], "TEST_MODE_ON_SCHEDULED_RUN")
         m_korea.assert_not_called()
         m_tele.assert_called_once()
-        self.assertIn("테스트 모드", m_tele.call_args[0][0])
+        body = m_tele.call_args[0][0]
+        self.assertIn("테스트 모드", body)
+        # [fix44a] 복구 안내가 실전 복구와 콘솔 테스트를 구분해야 한다.
+        # 이전 문구는 'false로 고친 뒤 force_run으로 재실행'이라 테스트하는 줄 알고
+        # 실주문을 낼 수 있었다.
+        self.assertIn("실제 주문이 나갑니다", body)
+        self.assertIn("빈 이벤트 {} 로 수동 실행", body)
+        self.assertNotIn('false 로 고친 뒤 테스트 이벤트', body)
 
     def test_manual_console_test_still_runs(self):
         """의도된 콘솔 테스트(force_run)는 그대로 돌아야 한다."""
