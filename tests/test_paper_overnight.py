@@ -166,7 +166,9 @@ class TestOvernightHold(PaperBotCase):
                                 pos={"AAA": {"entry": 100.0, "peak": 100.0,
                                              "shares": 10, "entry_at": "x"}})
         bot.cycle(1400.0, allow_entry=False)          # last_price = 120
+        bot.session_traded = True                     # 장중 순찰 있었음(#OPEN-PB ⓓ 전제)
         bot.day_start_krw = 100 * 10 * pf.fx0
+        bot.open_equity_krw = 100 * 10 * pf.fx0
         with mock.patch.object(pb, "fetch", lambda *a, **k: ser([500, 505])):
             bot.daily_summary(1400.0, "장마감")
         rec = [json.loads(l) for l in open(pb.DAILY, encoding="utf-8")][-1]

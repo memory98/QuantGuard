@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -77,6 +78,33 @@ def append_jsonl(path, obj):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+
+def upsert_jsonl_by_date(path, rec):
+    """[#OPEN-PB ⓓ] 같은 날짜 레코드를 덮어쓴다(append 금지).
+
+    기존엔 종료 경로마다 append해서 같은 날 두 번 켜면 두 줄이 쌓이고, 잠깐 켰다 끄면
+    가짜 '하루'가 생겼다(실측: 2026-07-30 수동종료 +0.02%). '하루=한 줄'을 보장한다.
+    """
+    rows = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if r.get("date") != rec["date"]:
+                rows.append(r)
+            else:
+                rec["sessions"] = int(r.get("sessions", 1)) + 1
+    rows.append(rec)
+    rows.sort(key=lambda r: r.get("date", ""))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def get_fx():
@@ -157,12 +185,14 @@ class Portfolio:
 
     def __init__(self, cfg):
         self.cfg = cfg
-        if STATE.exists():
-            d = json.loads(STATE.read_text(encoding="utf-8"))
+        self.last_close_equity_krw = None   # [#OPEN-PB ⓑ] 전일 마감 평가액(갭 계상 기준)
+        d = self._load_state()
+        if d is not None:
             self.cash = d["cash_usd"]
             self.pos = d["pos"]
             self.fx0 = d["fx0"]
             self.capital_krw = d["capital_krw"]
+            self.last_close_equity_krw = d.get("last_close_equity_krw")
         else:
             fx = get_fx()
             self.capital_krw = cfg["capital_krw"]
@@ -172,12 +202,44 @@ class Portfolio:
             self.save()
             log(f"🆕 신규 계좌: {self.capital_krw:,}원 ≈ ${self.cash:,.0f} (환율 {fx:,.1f})")
 
+    @staticmethod
+    def _load_state():
+        """[#OPEN-PB ⓐ] 상태 로드 — 손상 시 백업으로 복구. 둘 다 깨졌으면 조용히
+        새 계좌를 만들지 않고 큰 소리로 멈춘다(포지션 유실을 '정상 시작'으로 위장 금지)."""
+        for path, label in ((STATE, "본파일"), (STATE.with_suffix(".bak"), "백업")):
+            if not path.exists():
+                continue
+            try:
+                d = json.loads(path.read_text(encoding="utf-8"))
+                if label == "백업":
+                    log(f"⚠️ 상태파일 손상 → {label}에서 복구: {path.name}")
+                return d
+            except Exception as e:
+                log(f"🚨 상태파일 파싱 실패({label} {path.name}): {e}")
+        if STATE.exists() or STATE.with_suffix(".bak").exists():
+            raise RuntimeError(
+                "상태파일이 모두 손상됐습니다. 새 계좌를 자동 생성하지 않습니다 — "
+                f"{STATE} / {STATE.with_suffix('.bak')} 를 확인하거나 수동 삭제 후 재시작하세요.")
+        return None
+
     def save(self):
-        STATE.write_text(json.dumps({
+        """[#OPEN-PB ⓐ] 원자적 저장. 오버나이트 전환 이후 이 파일이 포지션의 유일한
+        기록이므로, 쓰는 중 프로세스가 죽어도 이전 상태가 남아야 한다(tmp → os.replace)."""
+        payload = json.dumps({
             "cash_usd": self.cash, "pos": self.pos, "fx0": self.fx0,
             "capital_krw": self.capital_krw,
+            "last_close_equity_krw": self.last_close_equity_krw,
             "updated": f"{datetime.now(KST):%Y-%m-%d %H:%M:%S}",
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        }, ensure_ascii=False, indent=2)
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        if STATE.exists():
+            try:
+                shutil.copy2(STATE, STATE.with_suffix(".bak"))
+            except Exception:
+                pass
+        tmp = STATE.with_suffix(".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, STATE)      # 원자적 교체
 
     def equity_usd(self, price):
         return self.cash + sum(p["shares"] * price.get(s, p["entry"]) for s, p in self.pos.items())
@@ -243,6 +305,11 @@ class Bot:
         # [오버나이트] 마지막으로 관측한 종목별 시세. 보유 종목을 '진입가'로 평가하는
         # equity_usd(price={}) 폴백을 쓰지 않기 위해 유지한다(수익률이 왜곡됨).
         self.last_price = {}
+        # [#OPEN-PB ⓒ] 시세별 관측시각. 값만 들고 있으면 며칠 전 시세로 평가해도 조용하다
+        # (analyze_returns fix41에서 고친 것과 같은 결함을 여기서 반복했음).
+        self.last_seen = {}
+        self.open_equity_krw = None        # [ⓑ] 당일 개장 첫 순찰 평가액
+        self.session_traded = False        # [ⓓ] 이 세션이 장중 순찰을 한 번이라도 했나
         self.universe = get_universe(cfg)   # 당일 거래대금 상위 스크리닝
 
     def _breakout(self, ser):
@@ -265,6 +332,9 @@ class Bot:
         data = self.feed.snapshot(syms, self.cfg["ma_window"])
         price = {s: float(ser.iloc[-1]) for s, ser in data.items()}
         self.last_price.update(price)
+        now = time.time()
+        for sym in price:
+            self.last_seen[sym] = now
         missing = [s for s in self.pf.pos if s not in price]
         if missing:
             log(f"⚠️ 보유 종목 시세 수집 실패 {missing} — 이번 순찰에서 청산 판정 불가")
@@ -323,27 +393,62 @@ class Bot:
         return False
 
     def daily_summary(self, fx, reason):
-        """하루 요약 1줄 기록(분석 핵심). vs SPY 포함."""
-        # [오버나이트] 보유 종목을 진입가가 아닌 '마지막 관측 시세'로 평가해야
-        # 당일·누적 수익률이 맞는다. price={}를 넘기면 캐리 포지션이 진입가로 계산된다.
+        """하루 요약 1줄 기록(분석 핵심). vs SPY·갭 분해·신선도 표기 포함.
+
+        [#OPEN-PB ⓑ] 수익률 기준은 '전일 마감 평가액' — 그래야 오버나이트 갭이 일별
+        수익률에 들어가고 일별 수익률의 곱이 자산곡선과 맞는다. 갭/장중을 분리 기록해
+        어느 쪽에서 성과가 났는지 사후에 가를 수 있게 한다.
+        [#OPEN-PB ⓒ] 캐리 포지션 평가에 쓴 시세가 낡았으면 수치를 내되 stale로 표기한다.
+        [#OPEN-PB ⓓ] 장중 순찰이 한 번도 없던 세션은 '하루'를 만들지 않는다.
+        """
+        if not self.session_traded:
+            log("ℹ️ 장중 순찰 없이 종료 — 일일요약 기록 생략(가짜 하루 방지)")
+            return
         eq_krw = self.pf.equity_usd(self.last_price) * self.pf.fx0
+
+        # 신선도 검사: 보유 종목 평가에 쓴 시세가 얼마나 낡았나
+        stale_limit = max(int(self.cfg.get("poll_sec", 180)) * 3, 1800)
+        now = time.time()
+        stale = sorted(s for s in self.pf.pos
+                       if now - self.last_seen.get(s, 0) > stale_limit)
+        if stale:
+            log(f"⚠️ 평가 시세가 낡은 보유 종목 {stale} — 요약을 stale로 표기")
+
         try:
             spy = fetch("SPY", "5d")
             spy_day = round((float(spy.iloc[-1]) / float(spy.iloc[-2]) - 1) * 100, 2)
         except Exception:
             spy_day = None
-        start = self.day_start_krw or self.pf.capital_krw
+
+        base = self.day_start_krw or self.pf.capital_krw
+        op = self.open_equity_krw
         rec = {
             "date": f"{datetime.now(KST):%Y-%m-%d}", "reason": reason,
-            "start_equity_krw": round(start), "end_equity_krw": round(eq_krw),
-            "day_return_pct": round((eq_krw / start - 1) * 100, 2) if start else 0,
+            "regime": "overnight" if not self.cfg.get("liquidate_on_close") else "daytrade",
+            "sessions": 1,
+            "start_equity_krw": round(base),          # = 전일 마감 평가액(있으면)
+            "open_equity_krw": round(op) if op else None,
+            "end_equity_krw": round(eq_krw),
+            # 전일 마감 대비(갭 포함) — 이 값들의 곱이 자산곡선과 일치해야 한다
+            "day_return_pct": round((eq_krw / base - 1) * 100, 2) if base else 0,
+            # 분해: 갭(전일마감→개장) / 장중(개장→마감)
+            "gap_pct": round((op / base - 1) * 100, 2) if (op and base) else None,
+            "intraday_pct": round((eq_krw / op - 1) * 100, 2) if op else None,
             "cum_return_pct": round((eq_krw / self.pf.capital_krw - 1) * 100, 2),
+            "positions_held": sorted(self.pf.pos.keys()),
+            "stale_priced": stale or None,
             "fx": round(fx, 1), "spy_day_pct": spy_day,
         }
-        append_jsonl(DAILY, rec)
+        upsert_jsonl_by_date(DAILY, rec)
+        # 다음 날의 갭 계산 기준 — 반드시 요약 직후 저장
+        self.pf.last_close_equity_krw = eq_krw
+        self.pf.save()
+        gap_txt = f" [갭 {rec['gap_pct']:+.2f}% / 장중 {rec['intraday_pct']:+.2f}%]" \
+            if rec["gap_pct"] is not None else ""
         log(f"📊 일일요약: 평가액 {rec['end_equity_krw']:,}원 "
             f"(당일 {rec['day_return_pct']:+.2f}% / 누적 {rec['cum_return_pct']:+.2f}%, "
-            f"SPY {spy_day if spy_day is not None else '?'}%)")
+            f"SPY {spy_day if spy_day is not None else '?'}%){gap_txt}"
+            f"{' ⚠️stale' if stale else ''}")
 
     def write_live(self, price, fx, running=True):
         """웹 대시보드용 실시간 스냅샷 저장. 평가액은 진입환율(fx0) 고정 = 순수 매매성과."""
@@ -397,8 +502,12 @@ class Bot:
                     log("🔔 미국장 개장 — 매매 시작")
                     self.need_day_start = True
                 price = self.cycle(fx, allow_entry=True)
+                self.session_traded = True
                 if self.need_day_start:
-                    self.day_start_krw = self.pf.equity_usd(price) * self.pf.fx0
+                    self.open_equity_krw = self.pf.equity_usd(price) * self.pf.fx0
+                    # [#OPEN-PB ⓑ] 기준은 '전일 마감 평가액' — 그래야 오버나이트 갭이
+                    # 일별 수익률에 들어간다. 없으면(첫 실행) 개장 평가액으로 대체.
+                    self.day_start_krw = self.pf.last_close_equity_krw or self.open_equity_krw
                     self.need_day_start = False
                 self.write_live(price, fx, True)
                 log(f"… 순찰 | 보유 {len(self.pf.pos)} | 평가액 {self.pf.equity_usd(price)*self.pf.fx0:,.0f}원")
@@ -418,7 +527,10 @@ class Bot:
                 if self.pf.pos:
                     try:
                         data = self.feed.snapshot(list(self.pf.pos.keys()), self.cfg["ma_window"])
-                        self.last_price.update({s: float(ser.iloc[-1]) for s, ser in data.items()})
+                        fresh = {s: float(ser.iloc[-1]) for s, ser in data.items()}
+                        self.last_price.update(fresh)
+                        for sym in fresh:
+                            self.last_seen[sym] = time.time()
                     except Exception:
                         pass
                 self.write_live(self.last_price, fx, True)
