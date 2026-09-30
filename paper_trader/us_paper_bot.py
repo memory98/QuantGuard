@@ -11,8 +11,15 @@ paper_trader/us_paper_bot.py — 미국주식 추세돌파 '종이(paper)' 자�
 
 운영(사용자 설계):
   - 미국장 시간(ET 9:30~16:00) 에만 매매. 장 밖에선 대기.
-  - **안 꺼도 장마감(16:00 ET, 약 05:00 KST) 때 자동 전량청산 + 일일요약 + 종료.**
-  - Ctrl-C 로 언제든 수동 종료(마무리). 손절 안 걸린 손실은 GRACE분 유예 후 청산(손절은 즉시).
+  - **장마감(16:00 ET, 약 05:00 KST) 때 일일요약 기록 + 종료. 포지션은 다음 날로 넘긴다(오버나이트).**
+  - Ctrl-C 로 언제든 수동 종료. 종료해도 포지션은 state에 남아 다음 실행이 이어받는다.
+  - `liquidate_on_close: true` 로 두면 옛 동작(마감 전량청산)으로 되돌아간다.
+
+[2026-09-30 오버나이트 전환 — 왜]
+  전략 정의는 스윙(20일 신고가 돌파 + 50일 이평 / 트레일 -10% / 손절 -5%)인데 구현이 매일
+  마감에 전량청산하는 데이트레이드였다. 대형주 일간변동 1~2%로는 -10% 트레일이 한 세션 안에
+  발동할 수 없어 **청산 규칙이 장식**이었고(실측: 거래 7건 전부 '종료-*' 청산, 손절·트레일 0건),
+  매일 전량 회전해 왕복비용 0.30%/일이 구조적으로 깎였다. 규칙이 작동할 시간을 주도록 전환.
 
 분석용 데이터(누적):
   - data/paper_us_state.json   현재 계좌(현금·보유)
@@ -106,7 +113,7 @@ def screen_universe(pool, size):
 
 def get_universe(cfg):
     """당일 스크리닝 유니버스(캐시). 하루 1회만 스크리닝하고 재사용."""
-    today = f"{datetime.now(KST):%Y-%m-%d}"
+    today = trading_date()   # ET 거래일 — 장중 캐시 만료 방지
     if UNIV.exists():
         try:
             d = json.loads(UNIV.read_text(encoding="utf-8"))
@@ -124,6 +131,16 @@ def get_universe(cfg):
         ensure_ascii=False, indent=2), encoding="utf-8")
     log(f"   → {len(uni)}종목 선정: {', '.join(uni[:12])}…")
     return uni
+
+
+def trading_date(dt=None):
+    """ET 기준 날짜. 유니버스 캐시 키로 쓴다.
+
+    KST 날짜를 쓰면 미국장이 KST 두 날짜에 걸치므로(22:30~05:00) **장중 자정에 캐시가 만료돼
+    유니버스가 통째로 재선정**된다. 그러면 진입 후보가 장중에 바뀌어 재현성이 깨지고, 보유 종목이
+    새 유니버스에서 빠질 수 있다. ET 날짜는 한 세션 내내 고정이다.
+    """
+    return f"{(dt or datetime.now(ET)).astimezone(ET):%Y-%m-%d}"
 
 
 def market_open(dt=None):
@@ -222,6 +239,10 @@ class Bot:
         self.feed = feed
         self.stop = False
         self.day_start_krw = None
+        self.need_day_start = False
+        # [오버나이트] 마지막으로 관측한 종목별 시세. 보유 종목을 '진입가'로 평가하는
+        # equity_usd(price={}) 폴백을 쓰지 않기 위해 유지한다(수익률이 왜곡됨).
+        self.last_price = {}
         self.universe = get_universe(cfg)   # 당일 거래대금 상위 스크리닝
 
     def _breakout(self, ser):
@@ -236,8 +257,17 @@ class Bot:
         return float(ser.iloc[-1] / ser.tail(self.cfg["ma_window"]).mean() - 1)
 
     def cycle(self, fx, allow_entry=True):
-        data = self.feed.snapshot(self.universe, self.cfg["ma_window"])
+        # [오버나이트 필수] 시세 수집 대상 = 유니버스 ∪ 보유종목.
+        # 유니버스만 긁으면, 보유 종목이 유니버스에서 밀려난 순간 price에 안 담기고
+        # 아래 청산 루프가 `continue`로 건너뛰어 **손절·트레일이 조용히 영구 미발동**한다.
+        # 당일청산 시절엔 몇 시간이면 끝나 잘 안 드러났지만, 며칠 들고 가면 치명적이다.
+        syms = list(dict.fromkeys(list(self.universe) + list(self.pf.pos.keys())))
+        data = self.feed.snapshot(syms, self.cfg["ma_window"])
         price = {s: float(ser.iloc[-1]) for s, ser in data.items()}
+        self.last_price.update(price)
+        missing = [s for s in self.pf.pos if s not in price]
+        if missing:
+            log(f"⚠️ 보유 종목 시세 수집 실패 {missing} — 이번 순찰에서 청산 판정 불가")
         # 청산(손절/트레일)
         for sym in list(self.pf.pos.keys()):
             if sym not in price:
@@ -253,6 +283,7 @@ class Bot:
         if allow_entry:
             slots = self.cfg["max_pos"] - len(self.pf.pos)
             if slots > 0:
+                # 진입 후보는 유니버스에서만 고른다(보유 합집합이 후보로 새지 않게)
                 cands = [(s, self._strength(data[s])) for s in self.universe
                          if s not in self.pf.pos and s in data and self._breakout(data[s])]
                 cands.sort(key=lambda x: -x[1])
@@ -293,7 +324,9 @@ class Bot:
 
     def daily_summary(self, fx, reason):
         """하루 요약 1줄 기록(분석 핵심). vs SPY 포함."""
-        eq_krw = self.pf.equity_usd({}) * self.pf.fx0
+        # [오버나이트] 보유 종목을 진입가가 아닌 '마지막 관측 시세'로 평가해야
+        # 당일·누적 수익률이 맞는다. price={}를 넘기면 캐리 포지션이 진입가로 계산된다.
+        eq_krw = self.pf.equity_usd(self.last_price) * self.pf.fx0
         try:
             spy = fetch("SPY", "5d")
             spy_day = round((float(spy.iloc[-1]) / float(spy.iloc[-2]) - 1) * 100, 2)
@@ -347,40 +380,62 @@ class Bot:
             pass
         poll = self.cfg["poll_sec"]
         log(f"▶ 종이 봇 시작 | 자본 {self.pf.capital_krw:,}원 | poll {poll}s")
-        log("   종료: Ctrl-C (수동) / 안 꺼도 미국장 마감(약 05:00 KST) 자동정리")
+        mode = "마감 전량청산" if self.cfg.get("liquidate_on_close") else "보유 유지(오버나이트)"
+        log(f"   장마감(약 05:00 KST) 시 {mode} 후 종료 / Ctrl-C 수동 종료")
         fx = get_fx()
-        self.day_start_krw = self.pf.equity_usd({}) * self.pf.fx0
+        # day_start는 첫 순찰에서 실시세로 확정한다(진입가 폴백 방지)
+        self.day_start_krw = None
+        self.need_day_start = True
         was_open = False
+        if self.pf.pos:
+            log(f"📦 이전 세션 포지션 이어받음: {list(self.pf.pos.keys())} (오버나이트)")
         while not self.stop:
             fx = get_fx()
             is_open = market_open()
             if is_open:
                 if not was_open:
                     log("🔔 미국장 개장 — 매매 시작")
-                    self.day_start_krw = self.pf.equity_usd({}) * self.pf.fx0
+                    self.need_day_start = True
                 price = self.cycle(fx, allow_entry=True)
+                if self.need_day_start:
+                    self.day_start_krw = self.pf.equity_usd(price) * self.pf.fx0
+                    self.need_day_start = False
                 self.write_live(price, fx, True)
                 log(f"… 순찰 | 보유 {len(self.pf.pos)} | 평가액 {self.pf.equity_usd(price)*self.pf.fx0:,.0f}원")
             elif was_open:
-                # 방금 장마감 → 자동 정리 + 요약 + 종료
-                log("🔔 미국장 마감 — 자동 정리 시작")
-                self.graceful_close("장마감", fx)
+                # 방금 장마감. 기본은 **보유 유지(오버나이트)** — 요약만 남기고 종료한다.
+                if self.cfg.get("liquidate_on_close"):
+                    log("🔔 미국장 마감 — 전량청산 모드(liquidate_on_close=true)")
+                    self.graceful_close("장마감", fx)
+                else:
+                    log(f"🔔 미국장 마감 — 보유 {len(self.pf.pos)}종목 다음 날로 이어감(오버나이트)")
                 self.daily_summary(fx, "장마감")
-                self.write_live({}, fx, False)
-                log("💤 하루 종료. 내일 다시 켜줘.")
+                self.write_live(self.last_price, fx, False)
+                log("💤 하루 종료. 포지션은 state에 유지됨 — 내일 다시 켜면 이어받는다.")
                 return
             else:
-                self.write_live({}, fx, True)
-                log("… 장 열림 대기중(미국 정규장 밖)")
+                # 장 밖: 매매하지 않는다. 보유 종목 시세만 읽어 대시보드를 최신화한다.
+                if self.pf.pos:
+                    try:
+                        data = self.feed.snapshot(list(self.pf.pos.keys()), self.cfg["ma_window"])
+                        self.last_price.update({s: float(ser.iloc[-1]) for s, ser in data.items()})
+                    except Exception:
+                        pass
+                self.write_live(self.last_price, fx, True)
+                log(f"… 장 열림 대기중(미국 정규장 밖) | 보유 {len(self.pf.pos)}")
             was_open = is_open
             for _ in range(int(poll)):
                 if self.stop:
                     break
                 time.sleep(1)
-        # 수동 종료
-        self.graceful_close("수동 종료(Ctrl-C)", fx)
+        # 수동 종료 — 포지션을 청산하지 않는다. 봇을 끄는 행위가 포트폴리오를 바꾸면
+        # 성과가 '언제 껐는지'에 좌우돼 측정 자체가 무의미해진다.
+        if self.cfg.get("liquidate_on_close"):
+            self.graceful_close("수동 종료(Ctrl-C)", fx)
+        elif self.pf.pos:
+            log(f"⏹ 수동 종료 — 보유 {len(self.pf.pos)}종목 유지(다음 실행이 이어받음)")
         self.daily_summary(fx, "수동종료")
-        self.write_live({}, fx, False)
+        self.write_live(self.last_price, fx, False)
         log("✅ 종료 완료.")
 
 
@@ -395,7 +450,7 @@ def main():
         fx = get_fx()
         log(f"🔎 --once 점검 (장 {'열림' if market_open() else '닫힘'}, 환율 {fx:,.1f})")
         price = bot.cycle(fx, allow_entry=market_open())
-        bot.write_live(price, fx, False)
+        bot.write_live(price, fx, False)   # last_price는 cycle이 갱신함
         log(f"보유 {list(pf.pos.keys()) or '없음'} | 평가액 {pf.equity_usd(price)*pf.fx0:,.0f}원")
     else:
         bot.run()
