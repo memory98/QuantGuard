@@ -101,5 +101,6 @@
     "SHOP",
     "MSTR"
   ],
-  "liquidate_on_close": false
+  "liquidate_on_close": false,
+  "reentry_cooldown_days": 1
 }

@@ -125,18 +125,32 @@ def avg_dollar_volume(sym, days=20):
     return sum(c * v for c, v in pairs) / len(pairs) if pairs else 0.0
 
 
+MIN_SCREEN_COVERAGE = 0.70   # [③] 후보풀 중 이 비율 미만만 조회되면 신뢰할 수 없다
+
+
 def screen_universe(pool, size):
-    """후보풀 → 거래대금 상위 size개."""
-    scored = []
+    """후보풀 → 거래대금 상위 size개. (선정목록, 조회성공수) 반환.
+
+    [③ 2026-10-01] 이전엔 종목별 실패를 `except: continue`로 삼키고 **몇 개가 실패했는지
+    세지도 않았다.** 절반이 실패해도 '성공한 것 중 상위 40'으로 조용히 진행되고,
+    전부 실패하면 후보풀 앞 40개(기술주 편중)로 무경고 폴백했다. rambdaA는 fix24로
+    커버리지 70% 가드를 넣어둔 바로 그 클래스인데 여기엔 없었다.
+    """
+    scored, failed = [], []
     for s in pool:
         try:
             dv = avg_dollar_volume(s)
             if dv > 0:
                 scored.append((s, dv))
+            else:
+                failed.append(s)
         except Exception:
-            continue
+            failed.append(s)
+    if failed:
+        log(f"⚠️ 스크리닝 실패 {len(failed)}/{len(pool)}종: {failed[:8]}"
+            f"{'…' if len(failed) > 8 else ''}")
     scored.sort(key=lambda x: -x[1])
-    return [s for s, _ in scored[:size]]
+    return [s for s, _ in scored[:size]], len(scored)
 
 
 def get_universe(cfg):
@@ -149,10 +163,19 @@ def get_universe(cfg):
                 return d["universe"]
         except Exception:
             pass
-    log(f"🔎 유니버스 스크리닝: 후보 {len(cfg['candidate_pool'])}개 → 거래대금 상위 {cfg['universe_size']}")
-    uni = screen_universe(cfg["candidate_pool"], cfg["universe_size"])
+    pool = cfg["candidate_pool"]
+    log(f"🔎 유니버스 스크리닝: 후보 {len(pool)}개 → 거래대금 상위 {cfg['universe_size']}")
+    uni, ok_n = screen_universe(pool, cfg["universe_size"])
+    coverage = ok_n / len(pool) if pool else 0.0
+    if coverage < MIN_SCREEN_COVERAGE:
+        # [③] 조용히 넘어가지 않는다 — 이 유니버스로 뽑은 top5는 신뢰도가 낮다.
+        log(f"🚨 스크리닝 커버리지 부족: {ok_n}/{len(pool)} ({coverage:.0%} < "
+            f"{MIN_SCREEN_COVERAGE:.0%}) — 유니버스 신뢰도 낮음(진입 판단 시 감안)")
+    else:
+        log(f"   커버리지 {ok_n}/{len(pool)} ({coverage:.0%})")
     if not uni:
-        uni = cfg["candidate_pool"][:cfg["universe_size"]]  # 스크리닝 실패 폴백
+        uni = pool[:cfg["universe_size"]]  # 스크리닝 전멸 폴백
+        log(f"🚨 스크리닝 전멸 → 후보풀 앞 {len(uni)}종으로 폴백(기술주 편중 주의)")
     UNIV.parent.mkdir(parents=True, exist_ok=True)
     UNIV.write_text(json.dumps({"date": today, "universe": uni,
         "screened_at": f"{datetime.now(KST):%Y-%m-%d %H:%M}"},
@@ -186,6 +209,7 @@ class Portfolio:
     def __init__(self, cfg):
         self.cfg = cfg
         self.last_close_equity_krw = None   # [#OPEN-PB ⓑ] 전일 마감 평가액(갭 계상 기준)
+        self.last_exit = {}                 # [② 재진입 쿨다운] sym → 마지막 청산 ET 거래일
         d = self._load_state()
         if d is not None:
             self.cash = d["cash_usd"]
@@ -193,6 +217,7 @@ class Portfolio:
             self.fx0 = d["fx0"]
             self.capital_krw = d["capital_krw"]
             self.last_close_equity_krw = d.get("last_close_equity_krw")
+            self.last_exit = d.get("last_exit") or {}     # [②] sym → 마지막 청산 ET 거래일
         else:
             fx = get_fx()
             self.capital_krw = cfg["capital_krw"]
@@ -229,6 +254,7 @@ class Portfolio:
             "cash_usd": self.cash, "pos": self.pos, "fx0": self.fx0,
             "capital_krw": self.capital_krw,
             "last_close_equity_krw": self.last_close_equity_krw,
+            "last_exit": self.last_exit,
             "updated": f"{datetime.now(KST):%Y-%m-%d %H:%M:%S}",
         }, ensure_ascii=False, indent=2)
         STATE.parent.mkdir(parents=True, exist_ok=True)
@@ -273,6 +299,9 @@ class Portfolio:
             "ret_pct": round(ret * 100, 2), "reason": reason,
             "entry_at": p["entry_at"], "pnl_krw": round(pnl_krw),
         })
+        # [② 재진입 쿨다운] 청산일을 남긴다 — 손절 직후 같은 종목을 다시 사서
+        # 왕복비용(0.30%)만 물리는 핑퐁을 막기 위한 근거.
+        self.last_exit[sym] = trading_date()
         log(f"🔴 매도(종이) {sym} {p['shares']}주 @ ${fill:.2f}  수익 {ret*100:+.1f}%  ({reason})")
         self.save()
 
@@ -310,18 +339,53 @@ class Bot:
         self.last_seen = {}
         self.open_equity_krw = None        # [ⓑ] 당일 개장 첫 순찰 평가액
         self.session_traded = False        # [ⓓ] 이 세션이 장중 순찰을 한 번이라도 했나
+        self._last_dropped = None          # [③] 직전 순찰의 유니버스 누락 목록(변화시에만 로그)
         self.universe = get_universe(cfg)   # 당일 거래대금 상위 스크리닝
 
     def _breakout(self, ser):
+        """[2026-10-01 ①] 오늘(진행중) 바를 **제외한** 과거 구간과 비교한다.
+
+        이전엔 `ser.tail(20).max()` 안에 오늘 값 c 자신이 들어 있어(자기참조):
+          - 실질 '직전 19일' 돌파가 되는 off-by-one이었고,
+          - 더 중요하게는 **장중 가격 vs 일간 종가**를 비교해 언제 쳐다보느냐에 따라
+            신호가 생겼다 사라졌다 했다(재현성 없음).
+        개장 직후엔 c가 사실상 시가라, 조건이 "시가 ≥ 직전 19일 종가 최고치"가 되어
+        **갭 상승 종목을 자동으로 추격 매수**하는 규칙으로 작동했다(2026-09-30 실측:
+        개장 2초 만에 5슬롯 만석). 오버나이트 보유로 바뀌며 진입 품질의 비중이 커져 교정한다.
+        50일 이평도 같은 이유로 오늘 바를 뺀다.
+        """
         c = float(ser.iloc[-1])
-        return c >= float(ser.tail(self.cfg["high_window"]).max()) and \
-            c > float(ser.tail(self.cfg["ma_window"]).mean())
+        hist = ser.iloc[:-1]                      # 오늘(진행중) 바 제외
+        need = max(self.cfg["high_window"], self.cfg["ma_window"])
+        if len(hist) < need:
+            return False
+        return c >= float(hist.tail(self.cfg["high_window"]).max()) and \
+            c > float(hist.tail(self.cfg["ma_window"]).mean())
 
     def _strength(self, ser):
         """신호 강도 = 최근 ~1개월(21거래일) 모멘텀. 강할수록 우선 매수."""
         if len(ser) > 21:
             return float(ser.iloc[-1] / ser.iloc[-21] - 1)
         return float(ser.iloc[-1] / ser.tail(self.cfg["ma_window"]).mean() - 1)
+
+    def _in_cooldown(self, sym) -> bool:
+        """[②] 최근 청산한 종목인가. 기본 1일 = 같은 ET 거래일 재진입 금지.
+
+        손절(-5%)로 나간 종목이 여전히 돌파 조건을 만족하면 몇 분 뒤 다시 살 수 있었고
+        (진입 필터가 '보유중이 아님'만 봤다), 그때마다 왕복 0.30%가 나갔다.
+        """
+        days = int(self.cfg.get("reentry_cooldown_days", 1))
+        if days <= 0:
+            return False
+        last = self.pf.last_exit.get(sym)
+        if not last:
+            return False
+        try:
+            gone = (datetime.strptime(trading_date(), "%Y-%m-%d")
+                    - datetime.strptime(last, "%Y-%m-%d")).days
+        except Exception:
+            return False
+        return gone < days
 
     def cycle(self, fx, allow_entry=True):
         # [오버나이트 필수] 시세 수집 대상 = 유니버스 ∪ 보유종목.
@@ -338,6 +402,16 @@ class Bot:
         missing = [s for s in self.pf.pos if s not in price]
         if missing:
             log(f"⚠️ 보유 종목 시세 수집 실패 {missing} — 이번 순찰에서 청산 판정 불가")
+        # [③] 유니버스 종목의 조용한 탈락(히스토리 부족·조회 실패)도 드러낸다.
+        # 후보군이 줄어든 채 top5를 뽑고 있는데 아무도 모르는 상황을 막는다.
+        dropped = sorted(s for s in self.universe if s not in price)
+        if dropped != self._last_dropped:
+            if dropped:
+                log(f"⚠️ 유니버스 시세 누락 {len(dropped)}/{len(self.universe)}종: "
+                    f"{dropped[:8]}{'…' if len(dropped) > 8 else ''}")
+            else:
+                log("✅ 유니버스 시세 전종목 수집 정상")
+            self._last_dropped = dropped
         # 청산(손절/트레일)
         for sym in list(self.pf.pos.keys()):
             if sym not in price:
@@ -354,8 +428,15 @@ class Bot:
             slots = self.cfg["max_pos"] - len(self.pf.pos)
             if slots > 0:
                 # 진입 후보는 유니버스에서만 고른다(보유 합집합이 후보로 새지 않게)
+                # [② 재진입 쿨다운] 최근 청산한 종목은 쿨다운 동안 제외한다.
                 cands = [(s, self._strength(data[s])) for s in self.universe
-                         if s not in self.pf.pos and s in data and self._breakout(data[s])]
+                         if s not in self.pf.pos and s in data
+                         and not self._in_cooldown(s) and self._breakout(data[s])]
+                blocked = [s for s in self.universe
+                           if s not in self.pf.pos and s in data
+                           and self._in_cooldown(s) and self._breakout(data[s])]
+                if blocked:
+                    log(f"⏸ 재진입 쿨다운으로 제외: {blocked}")
                 cands.sort(key=lambda x: -x[1])
                 eq = self.pf.equity_usd(price)
                 for sym, _ in cands[:slots]:
