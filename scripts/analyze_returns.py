@@ -3,6 +3,9 @@
 # 버전: v1.0.20260929.1
 #
 # 수정 이력:
+#   fix43(2026-09-30): fix41의 시계열 검증이 as_of=end(분석 마지막 구간일)를 써서, 분석을
+#     하루라도 늦게 돌리면 시세가 그보다 최신이라 '미래 데이터'로 오판해 RuntimeError로 죽었다.
+#     as_of=now로 교정. 발견 경위: 09-28 확정 종가로 재실행하려다 크래시.
 #   fix41(2026-09-29, #OPEN-BM): 벤치마크·종목 가격 조회가 '요청한 날짜의 종가'인지 검증하지
 #     않고 마지막 유효 종가를 조용히 대체하던 결함 제거. 요청일 바가 없으면 해당 구간을
 #     provisional(잠정)으로 표기한다. 사고: 2026-09-28 주간분석에서 40분 간격 두 실행이
@@ -135,9 +138,13 @@ class BenchmarkFetcher:
         valid = prices.dropna()
         if valid.empty:
             raise RuntimeError(f"벤치마크({self.ticker}) 유효 종가 0건 — 야후 응답 이상")
+        # [fix43] as_of는 **지금**이어야 한다. end(분석 마지막 구간일)를 넘기면,
+        # 분석을 며칠 늦게 돌려 시세가 end보다 최신일 때 '미래 데이터'로 오판해 터진다
+        # (fix41이 만든 회귀 — 런북의 '분석이 며칠 늦어도 결과 동일' 전제를 깨뜨렸다).
+        # 이 검증의 목적은 '피드가 살아있고 정상인가'이고, 구간별 신선도는 is_exact가 본다.
         ok, reason = validate_prices(
             last_date=valid.index[-1].to_pydatetime(), num_rows=len(valid),
-            last_value=float(valid.iloc[-1]), as_of=end,
+            last_value=float(valid.iloc[-1]), as_of=datetime.now(),
             min_rows=2, max_stale_days=self.MAX_SERIES_STALE_DAYS)
         if not ok:
             raise RuntimeError(f"벤치마크({self.ticker}) 시계열 검증 실패 — {reason}")

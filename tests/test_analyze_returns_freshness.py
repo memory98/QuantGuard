@@ -163,3 +163,22 @@ class TestSeriesValidation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLateAnalysisRegression(unittest.TestCase):
+    """[fix43] 분석을 며칠 늦게 돌려도 죽지 않아야 한다(fix41 회귀).
+
+    시세는 분석 마지막 구간일(end)보다 최신인 것이 정상이다. as_of=end로 검증하면
+    그 정상 상황을 '미래 데이터(시계 오류)'로 오판해 RuntimeError가 난다.
+    """
+
+    def test_series_newer_than_analysis_end_is_accepted(self):
+        import unittest.mock as mock
+        prices = series(["2026-09-21", "2026-09-22", "2026-09-23"])
+        fetcher = ar.BenchmarkFetcher()
+        with mock.patch.object(ar.yf, "download",
+                               return_value=pd.DataFrame({"Close": prices})):
+            fetcher.fetch_range(datetime(2026, 6, 29), datetime(2026, 9, 21))
+        pt = fetcher.price_on_or_before(datetime(2026, 9, 21, 14, 20))
+        self.assertTrue(pt.is_exact)
+        self.assertEqual(pt.value, 111700.0)
