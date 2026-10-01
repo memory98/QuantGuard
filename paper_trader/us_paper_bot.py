@@ -210,6 +210,12 @@ class Portfolio:
         self.cfg = cfg
         self.last_close_equity_krw = None   # [#OPEN-PB ⓑ] 전일 마감 평가액(갭 계상 기준)
         self.last_exit = {}                 # [② 재진입 쿨다운] sym → 마지막 청산 ET 거래일
+        # [2026-10-01 ⓑ-2] 당일 수익률 기준점을 state에 들고 간다. 장중에 봇을 껐다 켜면
+        # 기준점이 '재시작 시각 평가액'으로 다시 잡혀 그 사이 성과가 어느 날에도 안 들어갔다
+        # (#OPEN-PB ⓑ와 같은 클래스 — 재시작이 잦은 운용 방식에서 매번 구멍이 난다).
+        self.day_start_date = None          # 기준점이 속한 ET 거래일
+        self.day_start_krw = None           # 그날 기준 평가액(= 전일 마감 또는 당일 개장)
+        self.day_open_krw = None            # 당일 개장 평가액(갭/장중 분해용)
         d = self._load_state()
         if d is not None:
             self.cash = d["cash_usd"]
@@ -218,6 +224,9 @@ class Portfolio:
             self.capital_krw = d["capital_krw"]
             self.last_close_equity_krw = d.get("last_close_equity_krw")
             self.last_exit = d.get("last_exit") or {}     # [②] sym → 마지막 청산 ET 거래일
+            self.day_start_date = d.get("day_start_date")
+            self.day_start_krw = d.get("day_start_krw")
+            self.day_open_krw = d.get("day_open_krw")
         else:
             fx = get_fx()
             self.capital_krw = cfg["capital_krw"]
@@ -255,6 +264,9 @@ class Portfolio:
             "capital_krw": self.capital_krw,
             "last_close_equity_krw": self.last_close_equity_krw,
             "last_exit": self.last_exit,
+            "day_start_date": self.day_start_date,
+            "day_start_krw": self.day_start_krw,
+            "day_open_krw": self.day_open_krw,
             "updated": f"{datetime.now(KST):%Y-%m-%d %H:%M:%S}",
         }, ensure_ascii=False, indent=2)
         STATE.parent.mkdir(parents=True, exist_ok=True)
@@ -585,10 +597,23 @@ class Bot:
                 price = self.cycle(fx, allow_entry=True)
                 self.session_traded = True
                 if self.need_day_start:
-                    self.open_equity_krw = self.pf.equity_usd(price) * self.pf.fx0
-                    # [#OPEN-PB ⓑ] 기준은 '전일 마감 평가액' — 그래야 오버나이트 갭이
-                    # 일별 수익률에 들어간다. 없으면(첫 실행) 개장 평가액으로 대체.
-                    self.day_start_krw = self.pf.last_close_equity_krw or self.open_equity_krw
+                    today = trading_date()
+                    if self.pf.day_start_date == today and self.pf.day_start_krw:
+                        # [ⓑ-2] 같은 거래일에 재시작한 경우 — 기존 기준점을 이어받는다.
+                        # 새로 잡으면 껐다 켜기 전 구간이 어느 날에도 계상되지 않는다.
+                        self.day_start_krw = self.pf.day_start_krw
+                        self.open_equity_krw = self.pf.day_open_krw or self.day_start_krw
+                        log(f"↩️ 같은 거래일 재시작 — 당일 기준점 이어받음 "
+                            f"({self.day_start_krw:,.0f}원)")
+                    else:
+                        self.open_equity_krw = self.pf.equity_usd(price) * self.pf.fx0
+                        # [#OPEN-PB ⓑ] 기준은 '전일 마감 평가액' — 그래야 오버나이트 갭이
+                        # 일별 수익률에 들어간다. 없으면(첫 실행) 개장 평가액으로 대체.
+                        self.day_start_krw = self.pf.last_close_equity_krw or self.open_equity_krw
+                        self.pf.day_start_date = today
+                        self.pf.day_start_krw = self.day_start_krw
+                        self.pf.day_open_krw = self.open_equity_krw
+                        self.pf.save()
                     self.need_day_start = False
                 self.write_live(price, fx, True)
                 log(f"… 순찰 | 보유 {len(self.pf.pos)} | 평가액 {self.pf.equity_usd(price)*self.pf.fx0:,.0f}원")

@@ -215,3 +215,51 @@ class TestOneRowPerDay(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _open_once():
+    """첫 호출만 '장 열림'. market_open은 write_live에서도 불리므로 횟수를 가정하지 않는다."""
+    state = {"n": 0}
+
+    def fn(*a, **k):
+        state["n"] += 1
+        return state["n"] == 1
+    return fn
+
+
+class TestRestartKeepsDayBaseline(Base):
+    """[ⓑ-2] 장중에 껐다 켜도 당일 수익률 기준점이 유지돼야 한다.
+
+    기준점을 재시작 시각으로 다시 잡으면 껐다 켜기 전 구간이 어느 날에도 계상되지 않는다
+    (#OPEN-PB ⓑ와 같은 클래스). 이 봇은 수동 재시작이 잦아 매번 구멍이 난다.
+    """
+
+    def test_same_day_restart_inherits_baseline(self):
+        bot, pf = self.bot_with()
+        pf.day_start_date = pb.trading_date()
+        pf.day_start_krw = 10_000_000
+        pf.day_open_krw = 10_050_000
+        bot.need_day_start = True
+        with mock.patch.object(bot, "cycle", return_value={}), \
+             mock.patch.object(pb, "market_open", _open_once()), \
+             mock.patch.object(pb.subprocess, "Popen"), \
+             mock.patch.object(pb.time, "sleep", lambda *_: None):
+            bot.run()
+        self.assertEqual(bot.day_start_krw, 10_000_000,
+                         "재시작에서 기준점이 새로 잡혔다(구간 유실)")
+        self.assertEqual(bot.open_equity_krw, 10_050_000)
+
+    def test_new_day_sets_fresh_baseline(self):
+        bot, pf = self.bot_with()
+        pf.day_start_date = "2026-01-01"          # 다른 거래일
+        pf.day_start_krw = 777
+        pf.last_close_equity_krw = 9_900_000
+        bot.need_day_start = True
+        with mock.patch.object(bot, "cycle", return_value={}), \
+             mock.patch.object(pb, "market_open", _open_once()), \
+             mock.patch.object(pb.subprocess, "Popen"), \
+             mock.patch.object(pb.time, "sleep", lambda *_: None):
+            bot.run()
+        self.assertEqual(bot.day_start_krw, 9_900_000,
+                         "새 거래일인데 전일 마감 기준을 쓰지 않았다")
+        self.assertEqual(pf.day_start_date, pb.trading_date())
