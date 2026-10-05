@@ -137,23 +137,23 @@
       "from": "2026-09-21",
       "to": "2026-09-28",
       "market_status": "BULL",
-      "ic": 0.5711,
-      "top10_pct": 3.182,
-      "uni_pct": 0.837,
-      "spread_pct": 2.344,
+      "ic": -0.0506,
+      "top10_pct": -0.022,
+      "uni_pct": -0.345,
+      "spread_pct": 0.323,
       "quintiles_pct": [
-        2.628,
-        1.558,
-        0.397,
-        0.194,
-        -0.616
+        -0.372,
+        -1.236,
+        -0.416,
+        0.203,
+        0.09
       ],
       "n": 89,
       "proxy_corr": 0.9738,
       "proxy_beta": 1.1709
     }
   ],
-  "updated_at": "2026-09-28 15:11:24",
+  "updated_at": "2026-10-05 15:44:57",
   "verdict": {
     "status": "INSUFFICIENT",
     "weeks": 8,
@@ -197,7 +197,7 @@
     "midpoint": {
       "weeks": 13,
       "reached": false,
-      "spread_cum_pct": 3.632,
+      "spread_cum_pct": 1.611,
       "floor_pct": -10.0
     },
     "criteria": {
