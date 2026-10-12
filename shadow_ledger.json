@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05 15:44:45",
+  "generated_at": "2026-10-12 16:37:39",
   "source": "universe",
   "intervals": [
     {
@@ -129,18 +129,34 @@
       "baseline+해외분리": -0.77,
       "benchmark": -1.97,
       "account": 0.33
+    },
+    {
+      "from": "2026-09-28",
+      "to": "2026-10-12",
+      "dd_min": -0.066242,
+      "baseline(DD가드)": -1.79,
+      "concentrated(DD가드)": -0.07,
+      "voltilt(DD가드)": 0.16,
+      "baseline+콤보가드": -0.2,
+      "baseline+σ임계가드": -1.79,
+      "baseline+일간비상": -1.79,
+      "baseline+σ재보정": -1.79,
+      "baseline+해외1": -1.68,
+      "baseline+해외분리": -0.77,
+      "benchmark": -3.52,
+      "account": -3.7
     }
   ],
   "cumulative": {
-    "baseline(DD가드)": -0.88,
-    "concentrated(DD가드)": -0.84,
-    "voltilt(DD가드)": -1.59,
-    "baseline+콤보가드": -7.18,
-    "baseline+σ임계가드": 6.1,
-    "baseline+일간비상": -0.88,
-    "baseline+σ재보정": 10.44,
-    "baseline+해외1": -0.61,
-    "baseline+해외분리": -2.11
+    "baseline(DD가드)": -2.65,
+    "concentrated(DD가드)": -0.91,
+    "voltilt(DD가드)": -1.44,
+    "baseline+콤보가드": -7.37,
+    "baseline+σ임계가드": 4.21,
+    "baseline+일간비상": -2.65,
+    "baseline+σ재보정": 8.47,
+    "baseline+해외1": -2.28,
+    "baseline+해외분리": -2.87
   },
   "guard_specs": {
     "baseline(DD가드)": {
@@ -257,7 +273,7 @@
           {
             "rule": "SMA이탈",
             "close": 99105.0,
-            "sma": 104773.75852864583,
+            "sma": 104773.75846354167,
             "window": 120,
             "fired": true
           }
@@ -272,7 +288,7 @@
           {
             "rule": "SMA이탈",
             "close": 99105.0,
-            "sma": 104773.75852864583,
+            "sma": 104773.75846354167,
             "window": 120,
             "fired": true
           }
@@ -340,7 +356,7 @@
           {
             "rule": "SMA이탈",
             "close": 98265.0,
-            "sma": 105732.285546875,
+            "sma": 105732.28548177083,
             "window": 120,
             "fired": true
           }
@@ -355,7 +371,7 @@
           {
             "rule": "SMA이탈",
             "close": 98265.0,
-            "sma": 105732.285546875,
+            "sma": 105732.28548177083,
             "window": 120,
             "fired": true
           }
@@ -392,7 +408,7 @@
           {
             "rule": "SMA이탈",
             "close": 105995.0,
-            "sma": 107263.55201822917,
+            "sma": 107263.55188802084,
             "window": 120,
             "fired": true
           }
@@ -407,7 +423,7 @@
           {
             "rule": "SMA이탈",
             "close": 105995.0,
-            "sma": 107263.55201822917,
+            "sma": 107263.55188802084,
             "window": 120,
             "fired": true
           }
@@ -422,7 +438,7 @@
           {
             "rule": "SMA이탈",
             "close": 107615.0,
-            "sma": 108241.2107421875,
+            "sma": 108241.21067708333,
             "window": 120,
             "fired": true
           }
@@ -437,7 +453,7 @@
           {
             "rule": "SMA이탈",
             "close": 107615.0,
-            "sma": 108241.2107421875,
+            "sma": 108241.21067708333,
             "window": 120,
             "fired": true
           }
@@ -452,7 +468,7 @@
           {
             "rule": "SMA이탈",
             "close": 105410.0,
-            "sma": 110291.86803385416,
+            "sma": 110291.86809895834,
             "window": 120,
             "fired": true
           }
@@ -467,7 +483,37 @@
           {
             "rule": "SMA이탈",
             "close": 105410.0,
-            "sma": 110291.86803385416,
+            "sma": 110291.86809895834,
+            "window": 120,
+            "fired": true
+          }
+        ]
+      }
+    },
+    "2026-09-28→2026-10-12": {
+      "baseline+콤보가드": {
+        "rule": "콤보가드",
+        "op": "ANY_OF",
+        "fired_by": [
+          {
+            "rule": "SMA이탈",
+            "close": 109500.0,
+            "sma": 112195.8134765625,
+            "window": 120,
+            "fired": true
+          }
+        ],
+        "members": [
+          {
+            "rule": "DD가드",
+            "dd": -0.03221529895267139,
+            "threshold": -0.08,
+            "fired": false
+          },
+          {
+            "rule": "SMA이탈",
+            "close": 109500.0,
+            "sma": 112195.8134765625,
             "window": 120,
             "fired": true
           }
@@ -475,8 +521,8 @@
       }
     }
   },
-  "benchmark_pct": 10.49,
-  "account_pct": -1.06,
-  "account_intervals": 8,
+  "benchmark_pct": 6.6,
+  "account_pct": -4.72,
+  "account_intervals": 9,
   "note": "폴백(top_10) 구간은 백테스트 부트스트랩. 진짜 전진 OOS는 universe 스냅샷 누적(2026-08-03~)부터."
 }
