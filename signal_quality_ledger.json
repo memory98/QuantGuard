@@ -156,27 +156,46 @@
       "from": "2026-09-28",
       "to": "2026-10-12",
       "market_status": "BULL",
-      "ic": 0.0472,
-      "top10_pct": 2.317,
-      "uni_pct": -0.438,
-      "spread_pct": 2.755,
+      "ic": -0.0248,
+      "top10_pct": -2.924,
+      "uni_pct": -4.543,
+      "spread_pct": 1.619,
       "quintiles_pct": [
-        0.74,
-        -2.193,
-        -0.53,
-        0.145,
-        -0.416
+        -3.882,
+        -6.268,
+        -3.815,
+        -3.823,
+        -4.982
       ],
       "n": 88,
       "proxy_corr": 0.9786,
       "proxy_beta": 1.2114
+    },
+    {
+      "from": "2026-10-12",
+      "to": "2026-10-19",
+      "market_status": "BULL",
+      "ic": -0.7695,
+      "top10_pct": -16.642,
+      "uni_pct": -7.106,
+      "spread_pct": -9.535,
+      "quintiles_pct": [
+        -14.881,
+        -11.703,
+        -5.248,
+        -2.561,
+        -1.139
+      ],
+      "n": 90,
+      "proxy_corr": 0.969,
+      "proxy_beta": 1.1825
     }
   ],
-  "updated_at": "2026-10-12 16:37:55",
+  "updated_at": "2026-10-19 14:30:25",
   "verdict": {
     "status": "INSUFFICIENT",
-    "weeks": 9,
-    "need": 17,
+    "weeks": 10,
+    "need": 16,
     "note": "판정 보류 — 26주 누적 전엔 경향만 본다"
   },
   "criteria": {
@@ -196,27 +215,27 @@
     "spread_winrate": 0.554
   },
   "live_gate": {
-    "weeks": 9,
+    "weeks": 10,
     "horizon_weeks": 26,
-    "need": 17,
+    "need": 16,
     "eta": "2027-02-08",
     "window_start": "2026-08-03",
     "execution": {
       "violations": []
     },
     "proxy": {
-      "last_corr": 0.9786,
+      "last_corr": 0.969,
       "floor": 0.8,
       "breach_streak": 0,
       "need_streak": 2,
       "measured": true,
       "stale_weeks": 0,
-      "last_corr_asof": "2026-10-12"
+      "last_corr_asof": "2026-10-19"
     },
     "midpoint": {
       "weeks": 13,
       "reached": false,
-      "spread_cum_pct": 4.366,
+      "spread_cum_pct": -6.305,
       "floor_pct": -10.0
     },
     "criteria": {
@@ -228,6 +247,6 @@
       "note": "사전 고정 2026-09-08 — 사후에 바꾸지 않는다(AUDIT.md ③ STEP E)"
     },
     "status": "RUNNING",
-    "note": "중단선 미발동 — 계속. 17주 남음 (예상 2027-02-08)"
+    "note": "중단선 미발동 — 계속. 16주 남음 (예상 2027-02-08)"
   }
 }
