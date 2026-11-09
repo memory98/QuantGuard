@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-02 16:55:58",
+  "generated_at": "2026-11-09 17:19:01",
   "source": "universe",
   "intervals": [
     {
@@ -62,7 +62,7 @@
       "baseline+일간비상": 3.96,
       "baseline+σ재보정": 3.96,
       "baseline+해외1": 3.06,
-      "baseline+해외분리": 3.03,
+      "baseline+해외분리": 3.38,
       "benchmark": 1.53,
       "account": 3.39
     },
@@ -78,7 +78,7 @@
       "baseline+일간비상": -1.44,
       "baseline+σ재보정": -1.44,
       "baseline+해외1": -1.08,
-      "baseline+해외분리": -0.9,
+      "baseline+해외분리": -0.86,
       "benchmark": 2.98,
       "account": -1.38
     },
@@ -126,7 +126,7 @@
       "baseline+일간비상": 0.24,
       "baseline+σ재보정": 0.24,
       "baseline+해외1": 0.38,
-      "baseline+해외분리": -1.53,
+      "baseline+해외분리": -0.77,
       "benchmark": -1.97,
       "account": 0.33
     },
@@ -193,6 +193,22 @@
       "baseline+해외분리": 0.0,
       "benchmark": 8.24,
       "account": null
+    },
+    {
+      "from": "2026-11-02",
+      "to": "2026-11-09",
+      "dd_min": -0.221323,
+      "baseline(DD가드)": 0.0,
+      "concentrated(DD가드)": 0.0,
+      "voltilt(DD가드)": 0.0,
+      "baseline+콤보가드": 0.0,
+      "baseline+σ임계가드": 0.0,
+      "baseline+일간비상": 0.0,
+      "baseline+σ재보정": 0.0,
+      "baseline+해외1": 0.0,
+      "baseline+해외분리": 0.0,
+      "benchmark": -15.55,
+      "account": null
     }
   ],
   "cumulative": {
@@ -204,7 +220,7 @@
     "baseline+일간비상": -7.51,
     "baseline+σ재보정": 3.05,
     "baseline+해외1": -6.91,
-    "baseline+해외분리": -8.33
+    "baseline+해외분리": -7.28
   },
   "guard_specs": {
     "baseline(DD가드)": {
@@ -292,19 +308,19 @@
     "2026-08-03→2026-08-10": {
       "baseline(DD가드)": {
         "rule": "DD가드",
-        "dd": -0.23682757623498718,
+        "dd": -0.23682753025617187,
         "threshold": -0.08,
         "fired": true
       },
       "concentrated(DD가드)": {
         "rule": "DD가드",
-        "dd": -0.23682757623498718,
+        "dd": -0.23682753025617187,
         "threshold": -0.08,
         "fired": true
       },
       "voltilt(DD가드)": {
         "rule": "DD가드",
-        "dd": -0.23682757623498718,
+        "dd": -0.23682753025617187,
         "threshold": -0.08,
         "fired": true
       },
@@ -314,14 +330,14 @@
         "fired_by": [
           {
             "rule": "DD가드",
-            "dd": -0.23682757623498718,
+            "dd": -0.23682753025617187,
             "threshold": -0.08,
             "fired": true
           },
           {
             "rule": "SMA이탈",
             "close": 98964.0859375,
-            "sma": 104624.78365885417,
+            "sma": 104624.78346354167,
             "window": 120,
             "fired": true
           }
@@ -329,14 +345,14 @@
         "members": [
           {
             "rule": "DD가드",
-            "dd": -0.23682757623498718,
+            "dd": -0.23682753025617187,
             "threshold": -0.08,
             "fired": true
           },
           {
             "rule": "SMA이탈",
             "close": 98964.0859375,
-            "sma": 104624.78365885417,
+            "sma": 104624.78346354167,
             "window": 120,
             "fired": true
           }
@@ -344,8 +360,8 @@
       },
       "baseline+σ임계가드": {
         "rule": "σ임계가드",
-        "dd": -0.23682757623498718,
-        "threshold": -0.22035991939725,
+        "dd": -0.23682753025617187,
+        "threshold": -0.22035989646552306,
         "vol_window": 20,
         "fired": true
       },
@@ -354,20 +370,20 @@
         "delegated_to": "DD가드",
         "base": {
           "rule": "DD가드",
-          "dd": -0.23682757623498718,
+          "dd": -0.23682753025617187,
           "threshold": -0.08,
           "fired": true
         }
       },
       "baseline+해외1": {
         "rule": "DD가드",
-        "dd": -0.23682757623498718,
+        "dd": -0.23682753025617187,
         "threshold": -0.08,
         "fired": true
       },
       "baseline+해외분리": {
         "rule": "DD가드",
-        "dd": -0.23682757623498718,
+        "dd": -0.23682753025617187,
         "threshold": -0.08,
         "fired": true
       }
@@ -375,19 +391,19 @@
     "2026-08-10→2026-08-18": {
       "baseline(DD가드)": {
         "rule": "DD가드",
-        "dd": -0.1564989487831122,
+        "dd": -0.15649889213565737,
         "threshold": -0.08,
         "fired": true
       },
       "concentrated(DD가드)": {
         "rule": "DD가드",
-        "dd": -0.1564989487831122,
+        "dd": -0.15649889213565737,
         "threshold": -0.08,
         "fired": true
       },
       "voltilt(DD가드)": {
         "rule": "DD가드",
-        "dd": -0.1564989487831122,
+        "dd": -0.15649889213565737,
         "threshold": -0.08,
         "fired": true
       },
@@ -397,14 +413,14 @@
         "fired_by": [
           {
             "rule": "DD가드",
-            "dd": -0.1564989487831122,
+            "dd": -0.15649889213565737,
             "threshold": -0.08,
             "fired": true
           },
           {
             "rule": "SMA이탈",
             "close": 98125.28125,
-            "sma": 105581.94778645833,
+            "sma": 105581.94759114583,
             "window": 120,
             "fired": true
           }
@@ -412,14 +428,14 @@
         "members": [
           {
             "rule": "DD가드",
-            "dd": -0.1564989487831122,
+            "dd": -0.15649889213565737,
             "threshold": -0.08,
             "fired": true
           },
           {
             "rule": "SMA이탈",
             "close": 98125.28125,
-            "sma": 105581.94778645833,
+            "sma": 105581.94759114583,
             "window": 120,
             "fired": true
           }
@@ -430,20 +446,20 @@
         "delegated_to": "DD가드",
         "base": {
           "rule": "DD가드",
-          "dd": -0.1564989487831122,
+          "dd": -0.15649889213565737,
           "threshold": -0.08,
           "fired": true
         }
       },
       "baseline+해외1": {
         "rule": "DD가드",
-        "dd": -0.1564989487831122,
+        "dd": -0.15649889213565737,
         "threshold": -0.08,
         "fired": true
       },
       "baseline+해외분리": {
         "rule": "DD가드",
-        "dd": -0.1564989487831122,
+        "dd": -0.15649889213565737,
         "threshold": -0.08,
         "fired": true
       }
@@ -456,7 +472,7 @@
           {
             "rule": "SMA이탈",
             "close": 105844.2890625,
-            "sma": 107111.037109375,
+            "sma": 107111.0369140625,
             "window": 120,
             "fired": true
           }
@@ -471,7 +487,7 @@
           {
             "rule": "SMA이탈",
             "close": 105844.2890625,
-            "sma": 107111.037109375,
+            "sma": 107111.0369140625,
             "window": 120,
             "fired": true
           }
@@ -486,7 +502,7 @@
           {
             "rule": "SMA이탈",
             "close": 107461.984375,
-            "sma": 108087.305859375,
+            "sma": 108087.3056640625,
             "window": 120,
             "fired": true
           }
@@ -501,7 +517,7 @@
           {
             "rule": "SMA이탈",
             "close": 107461.984375,
-            "sma": 108087.305859375,
+            "sma": 108087.3056640625,
             "window": 120,
             "fired": true
           }
@@ -516,7 +532,7 @@
           {
             "rule": "SMA이탈",
             "close": 105260.1171875,
-            "sma": 110135.0474609375,
+            "sma": 110135.04713541667,
             "window": 120,
             "fired": true
           }
@@ -531,7 +547,7 @@
           {
             "rule": "SMA이탈",
             "close": 105260.1171875,
-            "sma": 110135.0474609375,
+            "sma": 110135.04713541667,
             "window": 120,
             "fired": true
           }
@@ -546,7 +562,7 @@
           {
             "rule": "SMA이탈",
             "close": 109344.3046875,
-            "sma": 112036.2857421875,
+            "sma": 112036.28561197917,
             "window": 120,
             "fired": true
           }
@@ -561,7 +577,7 @@
           {
             "rule": "SMA이탈",
             "close": 109344.3046875,
-            "sma": 112036.2857421875,
+            "sma": 112036.28561197917,
             "window": 120,
             "fired": true
           }
@@ -600,7 +616,7 @@
           {
             "rule": "SMA이탈",
             "close": 101460.53125,
-            "sma": 113683.63932291667,
+            "sma": 113683.63919270833,
             "window": 120,
             "fired": true
           }
@@ -615,7 +631,7 @@
           {
             "rule": "SMA이탈",
             "close": 101460.53125,
-            "sma": 113683.63932291667,
+            "sma": 113683.63919270833,
             "window": 120,
             "fired": true
           }
@@ -690,7 +706,7 @@
           {
             "rule": "SMA이탈",
             "close": 89802.1328125,
-            "sma": 113620.55182291666,
+            "sma": 113620.55149739583,
             "window": 120,
             "fired": true
           }
@@ -705,7 +721,7 @@
           {
             "rule": "SMA이탈",
             "close": 89802.1328125,
-            "sma": 113620.55182291666,
+            "sma": 113620.55149739583,
             "window": 120,
             "fired": true
           }
@@ -780,7 +796,7 @@
           {
             "rule": "SMA이탈",
             "close": 85872.7265625,
-            "sma": 113191.42740885417,
+            "sma": 113191.42721354167,
             "window": 120,
             "fired": true
           }
@@ -795,7 +811,7 @@
           {
             "rule": "SMA이탈",
             "close": 85872.7265625,
-            "sma": 113191.42740885417,
+            "sma": 113191.42721354167,
             "window": 120,
             "fired": true
           }
@@ -837,9 +853,99 @@
         "threshold": -0.08,
         "fired": true
       }
+    },
+    "2026-11-02→2026-11-09": {
+      "baseline(DD가드)": {
+        "rule": "DD가드",
+        "dd": -0.16939724371888154,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "concentrated(DD가드)": {
+        "rule": "DD가드",
+        "dd": -0.16939724371888154,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "voltilt(DD가드)": {
+        "rule": "DD가드",
+        "dd": -0.16939724371888154,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "baseline+콤보가드": {
+        "rule": "콤보가드",
+        "op": "ANY_OF",
+        "fired_by": [
+          {
+            "rule": "DD가드",
+            "dd": -0.16939724371888154,
+            "threshold": -0.08,
+            "fired": true
+          },
+          {
+            "rule": "SMA이탈",
+            "close": 92945.0,
+            "sma": 112729.19915364584,
+            "window": 120,
+            "fired": true
+          }
+        ],
+        "members": [
+          {
+            "rule": "DD가드",
+            "dd": -0.16939724371888154,
+            "threshold": -0.08,
+            "fired": true
+          },
+          {
+            "rule": "SMA이탈",
+            "close": 92945.0,
+            "sma": 112729.19915364584,
+            "window": 120,
+            "fired": true
+          }
+        ]
+      },
+      "baseline+σ임계가드": {
+        "rule": "σ임계가드",
+        "dd": -0.16939724371888154,
+        "threshold": -0.10401949581903036,
+        "vol_window": 20,
+        "fired": true
+      },
+      "baseline+일간비상": {
+        "rule": "일간비상차단기",
+        "delegated_to": "DD가드",
+        "base": {
+          "rule": "DD가드",
+          "dd": -0.16939724371888154,
+          "threshold": -0.08,
+          "fired": true
+        }
+      },
+      "baseline+σ재보정": {
+        "rule": "σ임계가드",
+        "dd": -0.16939724371888154,
+        "threshold": -0.16830281611662493,
+        "vol_window": 20,
+        "fired": true
+      },
+      "baseline+해외1": {
+        "rule": "DD가드",
+        "dd": -0.16939724371888154,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "baseline+해외분리": {
+        "rule": "DD가드",
+        "dd": -0.16939724371888154,
+        "threshold": -0.08,
+        "fired": true
+      }
     }
   },
-  "benchmark_pct": -6.08,
+  "benchmark_pct": -20.69,
   "account_pct": -8.38,
   "account_intervals": 10,
   "note": "폴백(top_10) 구간은 백테스트 부트스트랩. 진짜 전진 OOS는 universe 스냅샷 누적(2026-08-03~)부터."

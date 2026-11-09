@@ -227,13 +227,32 @@
       "n": 90,
       "proxy_corr": 0.9599,
       "proxy_beta": 0.5344
+    },
+    {
+      "from": "2026-11-02",
+      "to": "2026-11-09",
+      "market_status": "BEAR",
+      "ic": 0.1577,
+      "top10_pct": -5.718,
+      "uni_pct": -13.279,
+      "spread_pct": 7.561,
+      "quintiles_pct": [
+        -9.5,
+        -14.211,
+        -12.741,
+        -15.367,
+        -14.708
+      ],
+      "n": 92,
+      "proxy_corr": 0.8513,
+      "proxy_beta": 0.3085
     }
   ],
-  "updated_at": "2026-11-02 16:56:11",
+  "updated_at": "2026-11-09 17:19:36",
   "verdict": {
     "status": "INSUFFICIENT",
-    "weeks": 12,
-    "need": 14,
+    "weeks": 13,
+    "need": 13,
     "note": "판정 보류 — 26주 누적 전엔 경향만 본다"
   },
   "criteria": {
@@ -253,27 +272,27 @@
     "spread_winrate": 0.554
   },
   "live_gate": {
-    "weeks": 12,
+    "weeks": 13,
     "horizon_weeks": 26,
-    "need": 14,
+    "need": 13,
     "eta": "2027-02-08",
     "window_start": "2026-08-03",
     "execution": {
       "violations": []
     },
     "proxy": {
-      "last_corr": 0.9599,
+      "last_corr": 0.8513,
       "floor": 0.8,
       "breach_streak": 0,
       "need_streak": 2,
       "measured": true,
       "stale_weeks": 0,
-      "last_corr_asof": "2026-11-02"
+      "last_corr_asof": "2026-11-09"
     },
     "midpoint": {
       "weeks": 13,
-      "reached": false,
-      "spread_cum_pct": -3.587,
+      "reached": true,
+      "spread_cum_pct": 3.974,
       "floor_pct": -10.0
     },
     "criteria": {
@@ -285,6 +304,6 @@
       "note": "사전 고정 2026-09-08 — 사후에 바꾸지 않는다(AUDIT.md ③ STEP E)"
     },
     "status": "RUNNING",
-    "note": "중단선 미발동 — 계속. 14주 남음 (예상 2027-02-08)"
+    "note": "중단선 미발동 — 계속. 13주 남음 (예상 2027-02-08)"
   }
 }
