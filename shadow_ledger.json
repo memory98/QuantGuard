@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-09 17:19:01",
+  "generated_at": "2026-11-16 16:52:51",
   "source": "universe",
   "intervals": [
     {
@@ -209,6 +209,22 @@
       "baseline+해외분리": 0.0,
       "benchmark": -15.55,
       "account": null
+    },
+    {
+      "from": "2026-11-09",
+      "to": "2026-11-16",
+      "dd_min": -0.163473,
+      "baseline(DD가드)": 0.0,
+      "concentrated(DD가드)": 0.0,
+      "voltilt(DD가드)": 0.0,
+      "baseline+콤보가드": 0.0,
+      "baseline+σ임계가드": 0.0,
+      "baseline+일간비상": 0.0,
+      "baseline+σ재보정": -0.36,
+      "baseline+해외1": 0.0,
+      "baseline+해외분리": 0.0,
+      "benchmark": 1.8,
+      "account": null
     }
   ],
   "cumulative": {
@@ -218,7 +234,7 @@
     "baseline+콤보가드": -7.37,
     "baseline+σ임계가드": -0.99,
     "baseline+일간비상": -7.51,
-    "baseline+σ재보정": 3.05,
+    "baseline+σ재보정": 2.68,
     "baseline+해외1": -6.91,
     "baseline+해외분리": -7.28
   },
@@ -943,9 +959,92 @@
         "threshold": -0.08,
         "fired": true
       }
+    },
+    "2026-11-09→2026-11-16": {
+      "baseline(DD가드)": {
+        "rule": "DD가드",
+        "dd": -0.17823565131813135,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "concentrated(DD가드)": {
+        "rule": "DD가드",
+        "dd": -0.17823565131813135,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "voltilt(DD가드)": {
+        "rule": "DD가드",
+        "dd": -0.17823565131813135,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "baseline+콤보가드": {
+        "rule": "콤보가드",
+        "op": "ANY_OF",
+        "fired_by": [
+          {
+            "rule": "DD가드",
+            "dd": -0.17823565131813135,
+            "threshold": -0.08,
+            "fired": true
+          },
+          {
+            "rule": "SMA이탈",
+            "close": 78490.0,
+            "sma": 111297.6525390625,
+            "window": 120,
+            "fired": true
+          }
+        ],
+        "members": [
+          {
+            "rule": "DD가드",
+            "dd": -0.17823565131813135,
+            "threshold": -0.08,
+            "fired": true
+          },
+          {
+            "rule": "SMA이탈",
+            "close": 78490.0,
+            "sma": 111297.6525390625,
+            "window": 120,
+            "fired": true
+          }
+        ]
+      },
+      "baseline+σ임계가드": {
+        "rule": "σ임계가드",
+        "dd": -0.17823565131813135,
+        "threshold": -0.11373759046321144,
+        "vol_window": 20,
+        "fired": true
+      },
+      "baseline+일간비상": {
+        "rule": "일간비상차단기",
+        "delegated_to": "DD가드",
+        "base": {
+          "rule": "DD가드",
+          "dd": -0.17823565131813135,
+          "threshold": -0.08,
+          "fired": true
+        }
+      },
+      "baseline+해외1": {
+        "rule": "DD가드",
+        "dd": -0.17823565131813135,
+        "threshold": -0.08,
+        "fired": true
+      },
+      "baseline+해외분리": {
+        "rule": "DD가드",
+        "dd": -0.17823565131813135,
+        "threshold": -0.08,
+        "fired": true
+      }
     }
   },
-  "benchmark_pct": -20.69,
+  "benchmark_pct": -19.26,
   "account_pct": -8.38,
   "account_intervals": 10,
   "note": "폴백(top_10) 구간은 백테스트 부트스트랩. 진짜 전진 OOS는 universe 스냅샷 누적(2026-08-03~)부터."
