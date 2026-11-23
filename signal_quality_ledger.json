@@ -265,13 +265,32 @@
       "n": 92,
       "proxy_corr": 0.2444,
       "proxy_beta": 0.0863
+    },
+    {
+      "from": "2026-11-16",
+      "to": "2026-11-23",
+      "market_status": "BEAR",
+      "ic": 0.1511,
+      "top10_pct": -3.507,
+      "uni_pct": -6.915,
+      "spread_pct": 3.407,
+      "quintiles_pct": [
+        -4.484,
+        -7.837,
+        -7.15,
+        -5.899,
+        -9.197
+      ],
+      "n": 88,
+      "proxy_corr": 0.221,
+      "proxy_beta": 0.0793
     }
   ],
-  "updated_at": "2026-11-16 16:53:03",
+  "updated_at": "2026-11-23 19:07:08",
   "verdict": {
     "status": "INSUFFICIENT",
-    "weeks": 14,
-    "need": 12,
+    "weeks": 15,
+    "need": 11,
     "note": "판정 보류 — 26주 누적 전엔 경향만 본다"
   },
   "criteria": {
@@ -291,27 +310,27 @@
     "spread_winrate": 0.554
   },
   "live_gate": {
-    "weeks": 14,
+    "weeks": 15,
     "horizon_weeks": 26,
-    "need": 12,
+    "need": 11,
     "eta": "2027-02-08",
     "window_start": "2026-08-03",
     "execution": {
       "violations": []
     },
     "proxy": {
-      "last_corr": 0.2444,
+      "last_corr": 0.221,
       "floor": 0.8,
-      "breach_streak": 1,
+      "breach_streak": 2,
       "need_streak": 2,
       "measured": true,
       "stale_weeks": 0,
-      "last_corr_asof": "2026-11-16"
+      "last_corr_asof": "2026-11-23"
     },
     "midpoint": {
       "weeks": 13,
       "reached": true,
-      "spread_cum_pct": 3.021,
+      "spread_cum_pct": 6.428,
       "floor_pct": -10.0
     },
     "criteria": {
@@ -322,7 +341,7 @@
       "proxy_breach_streak": 2,
       "note": "사전 고정 2026-09-08 — 사후에 바꾸지 않는다(AUDIT.md ③ STEP E)"
     },
-    "status": "RUNNING",
-    "note": "중단선 미발동 — 계속. 12주 남음 (예상 2027-02-08)"
+    "status": "STOP_PROXY",
+    "note": "대리지표 상관 2주 연속 < 0.8 — DD가드의 전제(KODEX200이 포트 위험을 대변)가 깨졌다"
   }
 }
